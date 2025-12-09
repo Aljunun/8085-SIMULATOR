@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 
 // 5x7 Font for digits 0-9 and Hex A-F
 const FONT: Record<string, number[]> = {
@@ -27,38 +27,67 @@ interface MatrixDisplayProps {
 }
 
 export const MatrixDisplay: React.FC<MatrixDisplayProps> = ({ value }) => {
-  // Convert value to string and map to columns
-  // For simplicity, we just show the first 2 chars if it's > 9
-  const text = value.toString().padStart(2, ' ').slice(-2);
-  
-  // Create an empty 8x16 grid (2 chars side by side)
-  // But wait, user asked for Matrix LED. Let's do a single 8x8 or 8x16 module.
-  // 8x8 is standard for learning kits. Let's do 8 rows, 16 columns (2 digits).
-  
-  const getCols = (char: string) => FONT[char] || FONT[' '];
-  
-  const cols1 = getCols(text[0]);
-  const cols2 = getCols(text[1]);
-  
-  // Combine columns with a spacer
-  const allCols = [...cols1, 0x00, ...cols2]; // 5 + 1 + 5 = 11 cols. We have space for more.
-  
-  // Render grid
-  // Rows: 0-7. Cols: 0-15.
+  const [offset, setOffset] = useState(0);
+  const DISPLAY_WIDTH = 16; // Wider display for better scrolling effect
+
+  // Generate the full pixel buffer from the input string
+  const fullBuffer = useMemo(() => {
+    const getCols = (char: string) => FONT[char.toUpperCase()] || FONT[' '];
+    let cols: number[] = [];
+    
+    // Add initial padding
+    cols = [...Array(DISPLAY_WIDTH).fill(0)];
+    
+    // Add characters
+    value.split('').forEach(char => {
+      cols = [...cols, ...getCols(char), 0x00]; // Char + 1px spacing
+    });
+    
+    // Add trailing padding
+    cols = [...cols, ...Array(DISPLAY_WIDTH).fill(0)];
+    
+    return cols;
+  }, [value]);
+
+  // Animation Loop
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setOffset(prev => {
+        const maxOffset = fullBuffer.length - DISPLAY_WIDTH;
+        return prev >= maxOffset ? 0 : prev + 1;
+      });
+    }, 80); // Speed of scrolling
+
+    return () => clearInterval(timer);
+  }, [fullBuffer]);
+
+  // If value changes, reset offset slightly to ensure we see the new value come in
+  useEffect(() => {
+    setOffset(0);
+  }, [value]);
+
   const renderGrid = () => {
     const grid = [];
+    const visibleCols = fullBuffer.slice(offset, offset + DISPLAY_WIDTH);
+
+    // If for some reason visibleCols is short (shouldn't happen due to logic), pad it
+    while (visibleCols.length < DISPLAY_WIDTH) visibleCols.push(0);
+
     for (let r = 0; r < 7; r++) { // 7 rows
       const rowDots = [];
-      for (let c = 0; c < 12; c++) { // 12 cols
-        const colData = allCols[c] || 0;
-        // Check if bit r is set in colData. Top bit is LSB or MSB?
-        // Font map: 0x3E = 0011 1110. Let's say LSB is top.
+      for (let c = 0; c < DISPLAY_WIDTH; c++) {
+        const colData = visibleCols[c];
+        // Check bit r
         const isActive = (colData >> r) & 1;
         
         rowDots.push(
           <div 
             key={`${r}-${c}`} 
-            className={`led-matrix-dot ${isActive ? 'on' : ''}`}
+            className={`w-2 h-2 rounded-full transition-colors duration-75 ${
+              isActive 
+                ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,1)]' 
+                : 'bg-red-950/30'
+            }`}
           />
         );
       }
@@ -68,12 +97,19 @@ export const MatrixDisplay: React.FC<MatrixDisplayProps> = ({ value }) => {
   };
 
   return (
-    <div className="bg-black p-2 border-4 border-gray-800 inline-block shadow-lg">
-      <div className="flex flex-col gap-1">
+    <div className="bg-black p-3 border-2 border-gray-700 rounded inline-block shadow-2xl relative overflow-hidden group">
+      {/* Glass reflection effect */}
+      <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none z-10 rounded"></div>
+      
+      <div className="flex flex-col gap-1 relative z-0">
         {renderGrid()}
       </div>
-      <div className="text-center text-gray-500 text-[10px] mt-1 font-mono uppercase tracking-widest">
-        8x12 Matrix
+      
+      <div className="flex justify-between items-center mt-2 border-t border-gray-800 pt-1">
+         <div className="text-[9px] text-gray-500 font-mono uppercase tracking-widest">
+            SCROLL MATRIX
+         </div>
+         <div className="w-1 h-1 rounded-full bg-red-500 animate-pulse"></div>
       </div>
     </div>
   );
