@@ -562,7 +562,7 @@ const App = () => {
                     cycles={program[stepIndex].cycles}
                 />
             ) : (
-                <div className="flex items-center justify-center h-32 text-gray-500 text-sm italic bg-black/20 rounded border border-dashed border-gray-800">
+                <div className="flex items-center justify-center h-[450px] text-gray-500 text-sm italic bg-black/20 rounded border border-dashed border-gray-800 transition-all duration-300">
                     <div>Waiting for instruction execution...</div>
                 </div>
             )}
