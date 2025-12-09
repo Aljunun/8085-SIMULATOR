@@ -1,6 +1,6 @@
 import React from 'react';
 
-// 5x7 Font for digits 0-9 and Hex A-F
+// 5x7 Font for digits 0-9 and Hex A-F + Extra letters
 const FONT: Record<string, number[]> = {
   '0': [0x3E, 0x51, 0x49, 0x45, 0x3E],
   '1': [0x00, 0x42, 0x7F, 0x40, 0x00],
@@ -18,7 +18,28 @@ const FONT: Record<string, number[]> = {
   'D': [0x7F, 0x41, 0x41, 0x22, 0x1C],
   'E': [0x7F, 0x49, 0x49, 0x49, 0x41],
   'F': [0x7F, 0x09, 0x09, 0x09, 0x01],
+  'G': [0x3E, 0x41, 0x49, 0x49, 0x7A],
+  'H': [0x7F, 0x08, 0x08, 0x08, 0x7F],
+  'I': [0x00, 0x41, 0x7F, 0x41, 0x00],
+  'J': [0x20, 0x40, 0x41, 0x3F, 0x01],
+  'K': [0x7F, 0x08, 0x14, 0x22, 0x41],
+  'L': [0x7F, 0x40, 0x40, 0x40, 0x40],
+  'M': [0x7F, 0x02, 0x0C, 0x02, 0x7F],
+  'N': [0x7F, 0x04, 0x08, 0x10, 0x7F],
+  'O': [0x3E, 0x41, 0x41, 0x41, 0x3E],
+  'P': [0x7F, 0x09, 0x09, 0x09, 0x06],
+  'Q': [0x3E, 0x41, 0x51, 0x21, 0x5E],
+  'R': [0x7F, 0x09, 0x19, 0x29, 0x46],
+  'S': [0x46, 0x49, 0x49, 0x49, 0x31],
+  'T': [0x01, 0x01, 0x7F, 0x01, 0x01],
+  'U': [0x3F, 0x40, 0x40, 0x40, 0x3F],
+  'V': [0x1F, 0x20, 0x40, 0x20, 0x1F],
+  'W': [0x3F, 0x40, 0x38, 0x40, 0x3F],
+  'X': [0x63, 0x14, 0x08, 0x14, 0x63],
+  'Y': [0x07, 0x08, 0x70, 0x08, 0x07],
+  'Z': [0x61, 0x51, 0x49, 0x45, 0x43],
   '-': [0x08, 0x08, 0x08, 0x08, 0x08],
+  ':': [0x36, 0x36, 0x00, 0x00, 0x00],
   ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
 };
 
@@ -27,32 +48,25 @@ interface MatrixDisplayProps {
 }
 
 export const MatrixDisplay: React.FC<MatrixDisplayProps> = ({ value }) => {
-  // Convert value to string and map to columns
-  // For simplicity, we just show the first 2 chars if it's > 9
-  const text = value.toString().padStart(2, ' ').slice(-2);
+  // Take first 2 chars
+  const text = value.toString().padEnd(2, ' ').slice(0, 2);
   
-  // Create an empty 8x16 grid (2 chars side by side)
-  // But wait, user asked for Matrix LED. Let's do a single 8x8 or 8x16 module.
-  // 8x8 is standard for learning kits. Let's do 8 rows, 16 columns (2 digits).
-  
-  const getCols = (char: string) => FONT[char] || FONT[' '];
+  const getCols = (char: string) => FONT[char.toUpperCase()] || FONT[' '];
   
   const cols1 = getCols(text[0]);
   const cols2 = getCols(text[1]);
   
   // Combine columns with a spacer
-  const allCols = [...cols1, 0x00, ...cols2]; // 5 + 1 + 5 = 11 cols. We have space for more.
+  const allCols = [...cols1, 0x00, ...cols2]; // 5 + 1 + 5 = 11 cols.
   
   // Render grid
-  // Rows: 0-7. Cols: 0-15.
   const renderGrid = () => {
     const grid = [];
     for (let r = 0; r < 7; r++) { // 7 rows
       const rowDots = [];
       for (let c = 0; c < 12; c++) { // 12 cols
         const colData = allCols[c] || 0;
-        // Check if bit r is set in colData. Top bit is LSB or MSB?
-        // Font map: 0x3E = 0011 1110. Let's say LSB is top.
+        // Font map: 0x3E = 0011 1110. LSB is top.
         const isActive = (colData >> r) & 1;
         
         rowDots.push(
