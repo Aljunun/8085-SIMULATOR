@@ -3,6 +3,7 @@ import { RegisterView } from './components/RegisterView';
 import { StackView } from './components/StackView';
 import { CodeListing } from './components/CodeListing';
 import { MatrixDisplay } from './components/MatrixDisplay';
+import { TimingDiagram } from './components/TimingDiagram';
 import { generateConversionProgram, INITIAL_STATE } from './services/cpu';
 import { CpuState, InstructionStep } from './types';
 import { Play, SkipForward, RotateCcw, Cpu, GripHorizontal, Activity, Zap, Info, Maximize2, ZoomIn, ZoomOut, MousePointer2, Network } from 'lucide-react';
@@ -254,7 +255,8 @@ const App = () => {
     stack: { pos: { x: 1100, y: 100 } },
     display: { pos: { x: 550, y: 700 } },
     control: { pos: { x: 50, y: 700 } },
-    info: { pos: { x: 950, y: 700 } }
+    info: { pos: { x: 950, y: 700 } },
+    timing: { pos: { x: 950, y: 450 } }
   });
 
   const [viewport, setViewport] = useState({ x: 0, y: 0, scale: 0.9 }); // Start zoomed out slightly
@@ -550,6 +552,20 @@ const App = () => {
                      </>
                  )}
              </div>
+        </DraggableBox>
+
+        {/* 7. TIMING DIAGRAM */}
+        <DraggableBox id="timing" title="TIMING DIAGRAM" position={positions.timing.pos} scale={viewport.scale} onMove={updatePosition} icon={<Activity size={16} className="text-pink-400" />} accentColor="pink" defaultWidth="w-[650px]">
+            {stepIndex >= 0 && stepIndex < program.length ? (
+                <TimingDiagram 
+                    instructionCode={program[stepIndex].code}
+                    cycles={program[stepIndex].cycles}
+                />
+            ) : (
+                <div className="flex items-center justify-center h-32 text-gray-500 text-sm italic bg-black/20 rounded border border-dashed border-gray-800">
+                    <div>Waiting for instruction execution...</div>
+                </div>
+            )}
         </DraggableBox>
         
       </div>

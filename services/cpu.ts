@@ -1,4 +1,4 @@
-import { CpuState, InstructionStep, SimulationProgram } from '../types';
+import { CpuState, InstructionStep, SimulationProgram, MachineCycle } from '../types';
 
 // Helper to format hex
 const toHex2 = (n: number) => n.toString(16).toUpperCase().padStart(2, '0');
@@ -11,6 +11,53 @@ export const INITIAL_STATE: CpuState = {
   outputBuffer: []
 };
 
+// Helper to infer machine cycles from opcode
+const inferCycles = (code: string): MachineCycle[] => {
+  const opcode = code.split(' ')[0];
+  
+  if (opcode === 'LXI') {
+    return [
+      { type: 'OPCODE_FETCH', tStates: 4 },
+      { type: 'MEMORY_READ', tStates: 3 },
+      { type: 'MEMORY_READ', tStates: 3 }
+    ];
+  } else if (opcode === 'MVI') {
+    return [
+      { type: 'OPCODE_FETCH', tStates: 4 },
+      { type: 'MEMORY_READ', tStates: 3 }
+    ];
+  } else if (opcode === 'MOV' || opcode === 'RRC' || opcode === 'ADC' || opcode === 'DCR') {
+    return [
+      { type: 'OPCODE_FETCH', tStates: 4 }
+    ];
+  } else if (opcode === 'PUSH') {
+    return [
+      { type: 'OPCODE_FETCH', tStates: 6 },
+      { type: 'MEMORY_WRITE', tStates: 3 },
+      { type: 'MEMORY_WRITE', tStates: 3 }
+    ];
+  } else if (opcode === 'POP') {
+    return [
+      { type: 'OPCODE_FETCH', tStates: 4 },
+      { type: 'MEMORY_READ', tStates: 3 },
+      { type: 'MEMORY_READ', tStates: 3 }
+    ];
+  } else if (opcode === 'OUT') {
+    return [
+      { type: 'OPCODE_FETCH', tStates: 4 },
+      { type: 'MEMORY_READ', tStates: 3 },
+      { type: 'IO_WRITE', tStates: 3 }
+    ];
+  } else if (opcode === 'HLT') {
+    return [
+      { type: 'OPCODE_FETCH', tStates: 5 }
+    ];
+  }
+  
+  // Default fallback
+  return [{ type: 'OPCODE_FETCH', tStates: 4 }];
+};
+
 // Function to generate the specific program for Decimal -> Binary using Stack
 export const generateConversionProgram = (inputValue: number): SimulationProgram => {
   const steps: InstructionStep[] = [];
@@ -21,6 +68,7 @@ export const generateConversionProgram = (inputValue: number): SimulationProgram
       address: currentPc,
       code,
       description: desc,
+      cycles: inferCycles(code),
       execute: (prev) => {
         const changes = exec(prev);
         // Merge changes safely

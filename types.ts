@@ -25,10 +25,18 @@ export interface CpuState {
   outputBuffer: string[]; // For simulation output
 }
 
+export type MachineCycleType = 'OPCODE_FETCH' | 'MEMORY_READ' | 'MEMORY_WRITE' | 'IO_READ' | 'IO_WRITE';
+
+export interface MachineCycle {
+  type: MachineCycleType;
+  tStates: number;
+}
+
 export interface InstructionStep {
   address: number;
   code: string;
   description: string;
+  cycles: MachineCycle[];
   execute: (prevState: CpuState) => CpuState;
 }
 
