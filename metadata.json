@@ -1,0 +1,4 @@
+{
+  "name": "8085 Stack Simülatörü",
+  "description": "8085 mikroişlemcisi kullanarak Decimal sayıları Binary ve Hexadecimal formatına dönüştüren, stack yapısını görselleştiren eğitim amaçlı simülatör."
+}
