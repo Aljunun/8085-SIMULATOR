@@ -22,9 +22,7 @@ export interface CpuState {
   registers: Registers;
   flags: Flags;
   memory: Map<number, number>; // Address -> Value
-  outputBuffer: string[]; // Keep for legacy compatibility/logging
-  ports: Record<number, number>; // New: State of I/O ports. Port 1 = LEDs, Port 2 = Matrix
-  matrixText: string; // Special field for Matrix Display text
+  outputBuffer: string[]; // For simulation output
 }
 
 export type MachineCycleType = 'OPCODE_FETCH' | 'MEMORY_READ' | 'MEMORY_WRITE' | 'IO_READ' | 'IO_WRITE';
@@ -44,5 +42,4 @@ export interface InstructionStep {
 
 export interface SimulationProgram {
   steps: InstructionStep[];
-  programType: 'conversion' | 'counter'; // To help UI decide what to show
 }

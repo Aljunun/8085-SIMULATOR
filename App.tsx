@@ -4,9 +4,9 @@ import { StackView } from './components/StackView';
 import { CodeListing } from './components/CodeListing';
 import { MatrixDisplay } from './components/MatrixDisplay';
 import { TimingDiagram } from './components/TimingDiagram';
-import { generateConversionProgram, generateCounterProgram, INITIAL_STATE } from './services/cpu';
+import { generateConversionProgram, INITIAL_STATE } from './services/cpu';
 import { CpuState, InstructionStep } from './types';
-import { Play, SkipForward, RotateCcw, Cpu, GripHorizontal, Activity, Zap, Info, ZoomIn, ZoomOut, Network, MousePointer2 } from 'lucide-react';
+import { Play, SkipForward, RotateCcw, Cpu, GripHorizontal, Activity, Zap, Info, Maximize2, ZoomIn, ZoomOut, MousePointer2, Network } from 'lucide-react';
 
 // Types
 interface Position { x: number; y: number; }
@@ -75,17 +75,11 @@ const DraggableBox: React.FC<DraggableBoxProps> = ({
   const borderColor = accentColor === 'green' ? 'border-green-500/30' : 
                     accentColor === 'red' ? 'border-red-500/30' : 
                     accentColor === 'yellow' ? 'border-yellow-500/30' :
-                    accentColor === 'pink' ? 'border-pink-500/30' :
-                    accentColor === 'cyan' ? 'border-cyan-500/30' :
-                    accentColor === 'purple' ? 'border-purple-500/30' :
                     'border-blue-500/30';
   
   const shadowColor = accentColor === 'green' ? 'shadow-green-500/10' : 
                      accentColor === 'red' ? 'shadow-red-500/10' : 
                      accentColor === 'yellow' ? 'shadow-yellow-500/10' :
-                     accentColor === 'pink' ? 'shadow-pink-500/10' :
-                     accentColor === 'cyan' ? 'shadow-cyan-500/10' :
-                     accentColor === 'purple' ? 'shadow-purple-500/10' :
                      'shadow-blue-500/10';
 
   return (
@@ -251,12 +245,8 @@ const App = () => {
   const [inputVal, setInputVal] = useState<string>("10");
   const [cpuState, setCpuState] = useState<CpuState>(INITIAL_STATE);
   const [program, setProgram] = useState<InstructionStep[]>([]);
-  const [programType, setProgramType] = useState<'conversion' | 'counter'>('conversion');
+  const [stepIndex, setStepIndex] = useState<number>(-1);
   const [isRunning, setIsRunning] = useState(false);
-  const [interruptPending, setInterruptPending] = useState(false);
-  
-  // Scrolling Text State
-  const [scrollingText, setScrollingText] = useState("  ");
 
   // --- Layout & Viewport State ---
   const [positions, setPositions] = useState<BoxState>({
@@ -319,121 +309,42 @@ const App = () => {
   // --- Sim Helpers ---
   const handleReset = () => {
     setIsRunning(false);
-    setCpuState({ ...INITIAL_STATE });
-    // Keep the current program loaded, just reset state
+    setStepIndex(-1);
+    setCpuState(INITIAL_STATE);
+    setProgram([]);
   };
 
-  const handleLoadConversion = () => {
+  const handleLoad = () => {
     const num = parseInt(inputVal, 10);
     if (isNaN(num) || num < 0 || num > 255) { alert("0-255 arası sayı giriniz"); return; }
     const prog = generateConversionProgram(num);
     setProgram(prog.steps);
-    setProgramType('conversion');
     setCpuState(INITIAL_STATE);
+    setStepIndex(0);
     setIsRunning(false);
   };
 
-  const handleLoadCounter = () => {
-    const prog = generateCounterProgram();
-    setProgram(prog.steps);
-    setProgramType('counter');
-    setCpuState({
-        ...INITIAL_STATE,
-        registers: { ...INITIAL_STATE.registers, PC: 0x2000 } // Ensure PC starts at 2000 for counter
-    });
-    setIsRunning(false);
-  };
-
-  // Execution Logic
-  const executeStep = () => {
-    // 1. Hardware Interrupt Check
-    if (interruptPending) {
-        setInterruptPending(false);
-        // Emulate RST 7.5: Push PC, Jump to 003C
-        const sp = cpuState.registers.SP;
-        const pc = cpuState.registers.PC;
-        const newMemory = new Map(cpuState.memory);
-        // Push High Byte
-        newMemory.set(sp - 1, (pc >> 8) & 0xFF);
-        // Push Low Byte
-        newMemory.set(sp - 2, pc & 0xFF);
-        
-        setCpuState(prev => ({
-            ...prev,
-            registers: { ...prev.registers, SP: sp - 2, PC: 0x003C },
-            memory: newMemory
-        }));
-        return;
-    }
-
-    // 2. Normal Execution
-    const currentPc = cpuState.registers.PC;
-    const step = program.find(s => s.address === currentPc);
-    
-    if (!step) { 
-        // If we are in "Counter" mode and PC is valid but not in list?
-        // Actually our list covers the loop. If PC goes astray, stop.
-        setIsRunning(false); 
-        return; 
-    }
-    
-    const nextState = step.execute(cpuState);
+  const executeStep = (currentIdx: number) => {
+    if (currentIdx >= program.length) { setIsRunning(false); return; }
+    const nextState = program[currentIdx].execute(cpuState);
     setCpuState(nextState);
+    setStepIndex(currentIdx + 1);
   };
 
-  // Scrolling Logic
-  useEffect(() => {
-    let scrollTimer: any;
-    const msg = cpuState.matrixText;
-    
-    if (msg.length > 2) {
-        let idx = 0;
-        // Scroll speed
-        scrollTimer = setInterval(() => {
-            const slice = msg.slice(idx, idx + 2);
-            setScrollingText(slice.padEnd(2, ' '));
-            idx++;
-            if (idx >= msg.length) {
-                 idx = 0;
-                 // Optional: Pause at end or restart immediately
-            }
-        }, 300);
-    } else {
-        setScrollingText(msg);
-    }
-    
-    return () => clearInterval(scrollTimer);
-  }, [cpuState.matrixText]);
+  const handleStep = () => {
+    if (stepIndex === -1) { handleLoad(); return; }
+    executeStep(stepIndex);
+  };
 
   useEffect(() => {
     let interval: any;
-    if (isRunning) {
-        interval = setInterval(() => executeStep(), 200); // 5Hz Clock
+    if (isRunning && stepIndex > -1 && stepIndex < program.length) {
+        interval = setInterval(() => executeStep(stepIndex), 200);
+    } else if (stepIndex >= program.length) {
+        setIsRunning(false);
     }
     return () => clearInterval(interval);
-  }, [isRunning, cpuState, program, interruptPending]); // Dependencies need to include state to ensure fresh closure
-
-  // Find index for UI highlighting
-  const currentStepIndex = program.findIndex(p => p.address === cpuState.registers.PC);
-
-  // Determine what to show on Matrix
-  const getMatrixDisplayValue = () => {
-      if (cpuState.matrixText.length > 2) return scrollingText;
-      
-      if (programType === 'conversion') {
-          // Legacy behavior for conversion demo
-          const isFinished = currentStepIndex === -1 && program.length > 0; // Rough check
-          const numericValue = parseInt(cpuState.outputBuffer.join('').padEnd(8, '0'), 2);
-          return cpuState.outputBuffer.length === 8 ? numericValue.toString(16).toUpperCase() : "  ";
-      }
-      
-      // Default to matrixText if set (e.g. "  " or "XX")
-      return cpuState.matrixText;
-  };
-
-  const ledValue = programType === 'counter' 
-      ? cpuState.ports[1] || 0 
-      : parseInt(cpuState.outputBuffer.join('').padEnd(8, '0'), 2); // Legacy for conversion
+  }, [isRunning, stepIndex, program]);
 
   return (
     <div 
@@ -457,14 +368,35 @@ const App = () => {
          <button onClick={() => setViewport(v => ({...v, scale: Math.max(0.5, v.scale - 0.1)}))} className="p-2 hover:bg-gray-800 rounded"><ZoomOut size={16} /></button>
          <span className="font-mono text-sm flex items-center">{Math.round(viewport.scale * 100)}%</span>
          <button onClick={() => setViewport(v => ({...v, scale: Math.min(2.5, v.scale + 0.1)}))} className="p-2 hover:bg-gray-800 rounded"><ZoomIn size={16} /></button>
-         <button onClick={() => setViewport({x:0, y:0, scale:0.9})} className="px-2 text-xs font-bold text-blue-400">RESET VIEW</button>
+         <button onClick={() => setViewport({x:0, y:0, scale:0.9})} className="px-2 text-xs font-bold text-blue-400">RESET</button>
       </div>
       
       {/* Instructions Overlay */}
       <div className="fixed bottom-4 left-4 z-50 pointer-events-none text-xs text-gray-500 font-mono">
          <span className="bg-black/80 px-2 py-1 rounded border border-gray-800 text-blue-400">
-            SYSTEM: 8085 ARCHITECTURE | MODE: {programType.toUpperCase()}
+            SYSTEM: 8085 ARCHITECTURE | MOUSE: PAN/ZOOM | DRAG: ORGANIZE COMPONENTS
          </span>
+      </div>
+
+      {/* Credits Overlay */}
+      <div className="fixed bottom-4 right-4 z-50 text-right pointer-events-none select-none">
+          <div className="bg-black/80 p-3 rounded-lg border border-gray-800 backdrop-blur-sm">
+            <div className="text-[10px] uppercase text-blue-500 font-bold mb-2 tracking-widest border-b border-gray-800 pb-1">PROJECT TEAM</div>
+            <div className="space-y-1">
+                <div className="text-[11px] font-mono text-gray-400 flex justify-end gap-2">
+                    <span>Recep SAVAŞ</span>
+                    <span className="text-gray-600">22010903023</span>
+                </div>
+                <div className="text-[11px] font-mono text-gray-400 flex justify-end gap-2">
+                    <span>Oğuzhan ÖZEN</span>
+                    <span className="text-gray-600">22010903114</span>
+                </div>
+                <div className="text-[11px] font-mono text-gray-400 flex justify-end gap-2">
+                    <span>Nızar KABUL</span>
+                    <span className="text-gray-600">22010903068</span>
+                </div>
+            </div>
+          </div>
       </div>
 
       {/* TRANSFORM CONTAINER */}
@@ -479,7 +411,7 @@ const App = () => {
         {/* 1. CODE MODULE */}
         <DraggableBox id="code" title="PROGRAM MEMORY (ROM)" position={positions.code.pos} scale={viewport.scale} onMove={updatePosition} icon={<Network size={16} className="text-blue-400" />}>
             <div className="font-mono text-xs min-h-[300px]">
-                <CodeListing program={program} currentStepIndex={currentStepIndex} />
+                <CodeListing program={program} currentStepIndex={stepIndex < program.length ? stepIndex : program.length - 1} />
             </div>
         </DraggableBox>
 
@@ -490,7 +422,7 @@ const App = () => {
                     <div className="flex flex-col">
                         <span className="text-[10px] text-gray-500 uppercase">Durum</span>
                         <span className={`text-sm font-bold ${isRunning ? 'text-green-400' : 'text-gray-300'}`}>
-                            {isRunning ? 'EXECUTING...' : 'HALTED'}
+                            {isRunning ? 'EXECUTING...' : stepIndex >= 0 ? 'HALTED' : 'READY'}
                         </span>
                     </div>
                     <div className="flex flex-col text-right">
@@ -512,52 +444,26 @@ const App = () => {
         {/* 4. CONTROL PANEL */}
         <DraggableBox id="control" title="INPUT CONTROLLER" position={positions.control.pos} scale={viewport.scale} onMove={updatePosition} icon={<Activity size={16} className="text-yellow-400" />} accentColor="yellow">
             <div className="space-y-4">
-                {/* SCENARIO SELECTION */}
                 <div>
-                     <label className="text-xs text-gray-500 font-bold uppercase block mb-2">Scenario Select</label>
-                     <div className="flex gap-2 mb-2">
-                        <button onClick={handleLoadConversion} onMouseDown={(e) => e.stopPropagation()} className={`flex-1 py-1 text-xs border rounded ${programType === 'conversion' ? 'bg-blue-600 border-blue-500' : 'bg-gray-800 border-gray-600'}`}>DEC-&gt;BIN</button>
-                        <button onClick={handleLoadCounter} onMouseDown={(e) => e.stopPropagation()} className={`flex-1 py-1 text-xs border rounded ${programType === 'counter' ? 'bg-blue-600 border-blue-500' : 'bg-gray-800 border-gray-600'}`}>COUNTER</button>
-                     </div>
-                </div>
-
-                {/* Input Data (Only for Conversion) */}
-                {programType === 'conversion' && (
-                    <div>
-                        <label className="text-xs text-gray-500 font-bold uppercase block mb-2">Input Data (DEC)</label>
-                        <div className="flex gap-2">
-                            <input 
-                                type="number" 
-                                value={inputVal}
-                                onChange={(e) => setInputVal(e.target.value)}
-                                onMouseDown={(e) => e.stopPropagation()} 
-                                className="bg-black/50 border border-gray-700 rounded p-2 text-white font-mono w-full focus:border-yellow-500 focus:outline-none"
-                            />
-                            <button onClick={handleLoadConversion} onMouseDown={(e) => e.stopPropagation()} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-bold text-xs">LOAD</button>
-                        </div>
+                    <label className="text-xs text-gray-500 font-bold uppercase block mb-2">Input Data (DEC)</label>
+                    <div className="flex gap-2">
+                        <input 
+                            type="number" 
+                            value={inputVal}
+                            onChange={(e) => setInputVal(e.target.value)}
+                            onMouseDown={(e) => e.stopPropagation()} 
+                            className="bg-black/50 border border-gray-700 rounded p-2 text-white font-mono w-full focus:border-yellow-500 focus:outline-none"
+                        />
+                        <button onClick={handleLoad} onMouseDown={(e) => e.stopPropagation()} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-bold text-xs">LOAD</button>
                     </div>
-                )}
-                
-                {/* INTERRUPT BUTTON (Only for Counter) */}
-                {programType === 'counter' && (
-                     <button 
-                        onClick={() => setInterruptPending(true)} 
-                        onMouseDown={(e) => e.stopPropagation()} 
-                        className={`w-full p-4 mt-2 rounded font-bold border ${interruptPending ? 'bg-red-600 border-red-500 animate-pulse' : 'bg-red-900/30 border-red-800 hover:bg-red-800/50'}`}
-                    >
-                        <div className="flex items-center justify-center gap-2">
-                            <Zap size={18} className="text-white" />
-                            <span>TRIGGER RST 7.5 INTERRUPT</span>
-                        </div>
-                     </button>
-                )}
+                </div>
 
                 <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-800">
                     <button onClick={handleReset} onMouseDown={(e) => e.stopPropagation()} className="p-3 bg-gray-800/50 hover:bg-red-500/20 border border-transparent hover:border-red-500/50 rounded flex flex-col items-center gap-1 group">
                         <RotateCcw size={16} className="group-hover:text-red-400" />
                         <span className="text-[10px] font-bold">RST</span>
                     </button>
-                    <button onClick={() => executeStep()} onMouseDown={(e) => e.stopPropagation()} className="p-3 bg-gray-800/50 hover:bg-yellow-500/20 border border-transparent hover:border-yellow-500/50 rounded flex flex-col items-center gap-1 group">
+                    <button onClick={handleStep} onMouseDown={(e) => e.stopPropagation()} className="p-3 bg-gray-800/50 hover:bg-yellow-500/20 border border-transparent hover:border-yellow-500/50 rounded flex flex-col items-center gap-1 group">
                         <SkipForward size={16} className="group-hover:text-yellow-400" />
                         <span className="text-[10px] font-bold">STEP</span>
                     </button>
@@ -572,11 +478,20 @@ const App = () => {
         {/* 5. DISPLAY MODULE */}
         <DraggableBox id="display" title="OUTPUT PERIPHERAL" position={positions.display.pos} scale={viewport.scale} onMove={updatePosition} icon={<Zap size={16} className="text-red-400" />} accentColor="red">
              {(() => {
-                 const numericValue = ledValue;
-                 const displayHex = numericValue.toString(16).toUpperCase().padStart(2, '0') + "H";
-                 const displayBin = numericValue.toString(2).padStart(8, '0');
-                 const displayDec = numericValue.toString();
-                 const matrixStr = getMatrixDisplayValue();
+                 // Logic Update: Show result ONLY at the end of program execution
+                 const isFinished = stepIndex >= program.length && program.length > 0;
+                 
+                 const numericValue = isFinished
+                    ? parseInt(cpuState.outputBuffer.join('').padEnd(8, '0'), 2)
+                    : 0;
+                 
+                 const matrixStr = isFinished 
+                    ? numericValue.toString(16).toUpperCase().padStart(2, '0')
+                    : "  "; 
+                 
+                 const displayHex = isFinished ? matrixStr + "H" : "--";
+                 const displayBin = isFinished ? numericValue.toString(2).padStart(8, '0') : "--------";
+                 const displayDec = isFinished ? numericValue.toString() : "--";
                  
                  return (
                     <div className="flex flex-col gap-4">
@@ -586,7 +501,7 @@ const App = () => {
                             
                             <div className="mt-4 flex gap-1 z-10">
                                 {[7,6,5,4,3,2,1,0].map(bit => (
-                                    <div key={bit} className={`w-3 h-3 rounded-full transition-all duration-200 border border-black ${((numericValue >> bit) & 1) ? 'bg-red-500 shadow-[0_0_8px_red]' : 'bg-red-950/50'}`}></div>
+                                    <div key={bit} className={`w-3 h-3 rounded-full transition-all duration-200 border border-black ${(isFinished && (numericValue >> bit) & 1) ? 'bg-red-500 shadow-[0_0_8px_red]' : 'bg-red-950/50'}`}></div>
                                 ))}
                             </div>
                             
@@ -609,6 +524,10 @@ const App = () => {
                                   <span className="text-green-400 text-xl tracking-[0.2em] font-bold shadow-green-500/10 drop-shadow-sm">{displayBin}</span>
                              </div>
                         </div>
+                        
+                        <div className="text-[10px] text-center text-gray-600 font-mono">
+                            {isFinished ? "I/O PORT 01H: DATA READY" : "I/O PORT 01H: IDLE"}
+                        </div>
                     </div>
                  );
              })()}
@@ -618,44 +537,35 @@ const App = () => {
         <DraggableBox id="info" title="LOGIC ANALYZER" position={positions.info.pos} scale={viewport.scale} onMove={updatePosition} icon={<Info size={16} className="text-cyan-400" />} accentColor="cyan">
              <div className="space-y-2">
                  <div className="text-[10px] uppercase text-cyan-500 tracking-wider font-bold">Current Operation</div>
-                 {program.length === 0 ? (
-                     <div className="text-sm text-gray-500 italic">System Reset. Select Mode.</div>
+                 {stepIndex === -1 ? (
+                     <div className="text-sm text-gray-500 italic">System Reset. Load program to begin.</div>
+                 ) : stepIndex >= program.length ? (
+                     <div className="text-sm text-green-400 font-bold">Execution Halted.</div>
                  ) : (
-                     (() => {
-                        const step = program.find(s => s.address === cpuState.registers.PC);
-                        if (!step) {
-                            return <div className="text-sm text-gray-400 font-bold">Waiting / Idle</div>;
-                        }
-                        return (
-                            <>
-                                <div className="font-mono text-lg text-white bg-white/5 p-2 rounded border-l-2 border-cyan-500">
-                                    {step.code}
-                                </div>
-                                <div className="text-sm text-gray-300 leading-relaxed">
-                                    {step.description}
-                                </div>
-                            </>
-                        );
-                     })()
+                     <>
+                        <div className="font-mono text-lg text-white bg-white/5 p-2 rounded border-l-2 border-cyan-500">
+                            {program[stepIndex].code}
+                        </div>
+                        <div className="text-sm text-gray-300 leading-relaxed">
+                            {program[stepIndex].description}
+                        </div>
+                     </>
                  )}
              </div>
         </DraggableBox>
 
         {/* 7. TIMING DIAGRAM */}
         <DraggableBox id="timing" title="TIMING DIAGRAM" position={positions.timing.pos} scale={viewport.scale} onMove={updatePosition} icon={<Activity size={16} className="text-pink-400" />} accentColor="pink" defaultWidth="w-[650px]">
-            {(() => {
-                const step = program.find(s => s.address === cpuState.registers.PC);
-                return step ? (
-                    <TimingDiagram 
-                        instructionCode={step.code}
-                        cycles={step.cycles}
-                    />
-                ) : (
-                    <div className="flex items-center justify-center h-32 text-gray-500 text-sm italic bg-black/20 rounded border border-dashed border-gray-800">
-                        <div>Waiting for instruction execution...</div>
-                    </div>
-                );
-            })()}
+            {stepIndex >= 0 && stepIndex < program.length ? (
+                <TimingDiagram 
+                    instructionCode={program[stepIndex].code}
+                    cycles={program[stepIndex].cycles}
+                />
+            ) : (
+                <div className="flex items-center justify-center h-32 text-gray-500 text-sm italic bg-black/20 rounded border border-dashed border-gray-800">
+                    <div>Waiting for instruction execution...</div>
+                </div>
+            )}
         </DraggableBox>
         
       </div>
