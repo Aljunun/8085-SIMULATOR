@@ -390,7 +390,7 @@ const App = () => {
                     <span className="text-gray-600">22010903114</span>
                 </div>
                 <div className="text-[11px] font-mono text-gray-400 flex justify-end gap-2">
-                    <span>Nizar KABUL</span>
+                    <span>Nızar KABUL</span>
                     <span className="text-gray-600">22010903068</span>
                 </div>
             </div>
