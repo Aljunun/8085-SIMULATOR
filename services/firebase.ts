@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, getDocs, writeBatch } from "firebase/firestore";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAnalytics } from "firebase/analytics";
 
 const firebaseConfig = {
@@ -16,6 +17,7 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const storage = getStorage(app);
 
 // Initialize Analytics (only in browser)
 let analytics;
@@ -31,8 +33,11 @@ const usersCollection = collection(db, 'users');
 export const sendMessage = async (message: {
   username: string;
   avatar: string;
-  text: string;
+  text?: string;
+  imageUrl?: string;
+  gifUrl?: string;
   timestamp: number;
+  type: 'text' | 'image' | 'gif';
 }) => {
   return await addDoc(messagesCollection, message);
 };
@@ -72,4 +77,11 @@ export const saveUser = async (userId: string, userData: { username: string; ava
   });
 };
 
-export { db };
+// Storage functions
+export const uploadImage = async (file: File): Promise<string> => {
+  const storageRef = ref(storage, `images/${Date.now()}_${file.name}`);
+  await uploadBytes(storageRef, file);
+  return await getDownloadURL(storageRef);
+};
+
+export { db, storage };

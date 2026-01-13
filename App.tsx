@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Settings, Hash, Users } from 'lucide-react';
-import { sendMessage, subscribeToMessages, clearAllMessages, saveUser } from './services/firebase';
+import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip } from 'lucide-react';
+import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage } from './services/firebase';
 
 interface Message {
   id: string;
   username: string;
   avatar: string;
-  text: string;
+  text?: string;
+  imageUrl?: string;
+  gifUrl?: string;
   timestamp: number;
+  type: 'text' | 'image' | 'gif';
 }
 
 interface UserData {
@@ -37,6 +40,107 @@ const playNotificationSound = () => {
   } catch (e) {
     console.log('Audio notification failed:', e);
   }
+};
+
+// GIPHY API Key (public beta key - replace with your own)
+const GIPHY_API_KEY = 'GlVGYHkr3WSBnllca54iNt0yFbjz7L65';
+
+// GIPHY Search Component
+const GiphyPicker: React.FC<{
+  onSelect: (gifUrl: string) => void;
+  onClose: () => void;
+}> = ({ onSelect, onClose }) => {
+  const [gifs, setGifs] = useState<any[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  const searchGifs = async (query: string = 'trending') => {
+    setIsLoading(true);
+    try {
+      const url = query === 'trending' || !query
+        ? `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=20`
+        : `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(query)}&limit=20`;
+      
+      const response = await fetch(url);
+      const data = await response.json();
+      setGifs(data.data || []);
+    } catch (error) {
+      console.error('Error fetching GIFs:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    searchGifs();
+  }, []);
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchTerm.trim()) {
+      searchGifs(searchTerm);
+    } else {
+      searchGifs('trending');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-[#36393f]/95 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-[#2f3136] rounded-lg shadow-2xl w-full max-w-2xl h-[600px] flex flex-col border border-[#202225]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-[#202225]">
+          <h2 className="text-lg font-bold text-white">GIF Seç</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition">
+            <X size={24} />
+          </button>
+        </div>
+        
+        <div className="p-4 border-b border-[#202225]">
+          <form onSubmit={handleSearch} className="flex gap-2">
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="GIF ara..."
+              className="flex-1 px-4 py-2 bg-[#202225] border border-[#202225] rounded text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] transition"
+            />
+            <button
+              type="submit"
+              className="px-4 py-2 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded transition"
+            >
+              Ara
+            </button>
+          </form>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {isLoading ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-gray-400">Yükleniyor...</div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {gifs.map((gif) => (
+                <div
+                  key={gif.id}
+                  onClick={() => {
+                    onSelect(gif.images.original.url);
+                    onClose();
+                  }}
+                  className="cursor-pointer hover:opacity-80 transition rounded overflow-hidden"
+                >
+                  <img
+                    src={gif.images.fixed_height_small.url}
+                    alt={gif.title}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // Login Modal Component
@@ -73,7 +177,7 @@ const LoginModal: React.FC<{
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-[#36393f]/95 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-[#36393f] rounded-lg shadow-2xl w-full max-w-md border border-[#202225]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-6 border-b border-[#202225]">
           <h2 className="text-xl font-bold text-white">Kutuphane Chat'e Hoş Geldiniz</h2>
@@ -145,8 +249,10 @@ const App: React.FC = () => {
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showGiphyPicker, setShowGiphyPicker] = useState(false);
   const [notification, setNotification] = useState<{ username: string; text: string } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const prevMessagesLengthRef = useRef(0);
 
   // Subscribe to Firebase messages
@@ -165,9 +271,10 @@ const App: React.FC = () => {
           playNotificationSound();
           
           // Show notification
+          const messageText = lastMessage.text || lastMessage.imageUrl ? '📷 Fotoğraf' : lastMessage.gifUrl ? '🎬 GIF' : '';
           setNotification({
             username: lastMessage.username,
-            text: lastMessage.text
+            text: messageText || lastMessage.text || ''
           });
           
           // Auto hide notification after 5 seconds
@@ -178,7 +285,7 @@ const App: React.FC = () => {
           // Browser notification
           if ('Notification' in window && Notification.permission === 'granted') {
             new Notification(`Yeni mesaj: ${lastMessage.username}`, {
-              body: lastMessage.text,
+              body: messageText || lastMessage.text || '',
               icon: lastMessage.avatar
             });
           }
@@ -221,6 +328,46 @@ const App: React.FC = () => {
     };
     setUser(userData);
     saveUser(userId, { username: userData.username, avatar: userData.avatar });
+    setShowLoginModal(false);
+  };
+
+  const handleImageUpload = async (file: File) => {
+    if (!user) return;
+    setIsLoading(true);
+    try {
+      const imageUrl = await uploadImage(file);
+      await sendMessage({
+        username: user.username,
+        avatar: user.avatar,
+        imageUrl: imageUrl,
+        timestamp: Date.now(),
+        type: 'image'
+      });
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      alert('Fotoğraf yüklenirken bir hata oluştu.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGifSelect = async (gifUrl: string) => {
+    if (!user) return;
+    setIsLoading(true);
+    try {
+      await sendMessage({
+        username: user.username,
+        avatar: user.avatar,
+        gifUrl: gifUrl,
+        timestamp: Date.now(),
+        type: 'gif'
+      });
+    } catch (error) {
+      console.error('Error sending GIF:', error);
+      alert('GIF gönderilirken bir hata oluştu.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSendMessage = async () => {
@@ -231,7 +378,8 @@ const App: React.FC = () => {
           username: user.username,
           avatar: user.avatar,
           text: inputMessage.trim(),
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          type: 'text'
         });
         setInputMessage('');
       } catch (error) {
@@ -260,10 +408,10 @@ const App: React.FC = () => {
     setShowLoginModal(true);
   };
 
-  // Get unique users from messages
+  // Get unique users from messages (excluding current user from list, show separately)
   const uniqueUsers = Array.from(
     new Map(messages.map(msg => [msg.username, { username: msg.username, avatar: msg.avatar }])).values()
-  );
+  ).filter(u => u.username !== user?.username);
 
   return (
     <div className="h-screen flex bg-[#36393f] text-white overflow-hidden">
@@ -280,7 +428,7 @@ const App: React.FC = () => {
         {/* Users List */}
         <div className="flex-1 overflow-y-auto p-2">
           <div className="px-2 py-1 text-xs font-semibold text-gray-400 uppercase mb-2">
-            Online — {uniqueUsers.length}
+            Online — {uniqueUsers.length + (user ? 1 : 0)}
           </div>
           <div className="space-y-1">
             {uniqueUsers.map((u, idx) => (
@@ -388,7 +536,28 @@ const App: React.FC = () => {
                         })}
                       </span>
                     </div>
-                    <div className="text-gray-300 text-sm break-words">{msg.text}</div>
+                    {msg.type === 'image' && msg.imageUrl && (
+                      <div className="mb-2">
+                        <img
+                          src={msg.imageUrl}
+                          alt="Uploaded"
+                          className="max-w-md rounded-lg cursor-pointer hover:opacity-90 transition"
+                          onClick={() => window.open(msg.imageUrl, '_blank')}
+                        />
+                      </div>
+                    )}
+                    {msg.type === 'gif' && msg.gifUrl && (
+                      <div className="mb-2">
+                        <img
+                          src={msg.gifUrl}
+                          alt="GIF"
+                          className="max-w-md rounded-lg cursor-pointer"
+                        />
+                      </div>
+                    )}
+                    {msg.text && (
+                      <div className="text-gray-300 text-sm break-words">{msg.text}</div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -400,6 +569,34 @@ const App: React.FC = () => {
         {/* Input Area */}
         <div className="p-4 bg-[#36393f] border-t border-[#202225]">
           <div className="flex gap-2 max-w-4xl">
+            <div className="flex gap-1">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading || !user}
+                className="p-2 text-gray-400 hover:text-white hover:bg-[#40444b] rounded transition disabled:opacity-50"
+                title="Fotoğraf Yükle"
+              >
+                <Paperclip size={20} />
+              </button>
+              <button
+                onClick={() => setShowGiphyPicker(true)}
+                disabled={isLoading || !user}
+                className="p-2 text-gray-400 hover:text-white hover:bg-[#40444b] rounded transition disabled:opacity-50"
+                title="GIF Gönder"
+              >
+                <Smile size={20} />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImageUpload(file);
+                }}
+                className="hidden"
+              />
+            </div>
             <input
               type="text"
               value={inputMessage}
@@ -448,12 +645,18 @@ const App: React.FC = () => {
 
       {/* Login Modal */}
       <LoginModal
-        isOpen={showLoginModal}
-        onClose={() => {
-          if (user) setShowLoginModal(false);
-        }}
+        isOpen={showLoginModal && !user}
+        onClose={() => {}}
         onLogin={handleLogin}
       />
+
+      {/* GIPHY Picker */}
+      {showGiphyPicker && (
+        <GiphyPicker
+          onSelect={handleGifSelect}
+          onClose={() => setShowGiphyPicker(false)}
+        />
+      )}
 
       <style>{`
         @keyframes slideIn {
