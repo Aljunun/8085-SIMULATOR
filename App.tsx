@@ -660,6 +660,9 @@ const App: React.FC = () => {
   const [mentionPosition, setMentionPosition] = useState(0);
   const [selectedUserProfile, setSelectedUserProfile] = useState<{ username: string; avatar: string } | null>(null);
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [editUsername, setEditUsername] = useState('');
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -737,6 +740,13 @@ const App: React.FC = () => {
     });
     return () => unsubscribe();
   }, []);
+
+  // Update editUsername when settings modal opens
+  useEffect(() => {
+    if (showSettings && user) {
+      setEditUsername(user.username);
+    }
+  }, [showSettings, user]);
 
   // Subscribe to channels
   useEffect(() => {
@@ -1249,7 +1259,7 @@ const App: React.FC = () => {
   if (!user) {
   return (
       <div className="h-screen flex items-center justify-center bg-gradient-to-br from-[#1a1c1f] via-[#2f3136] to-[#36393f] p-4">
-        <div className="w-full max-w-md modern-card rounded-xl p-8 border border-white/10 shadow-2xl">
+        <div className={`w-full max-w-md modern-card rounded-xl p-8 border ${darkMode ? 'border-white/10' : 'border-gray-200'} shadow-2xl`}>
           <div className="text-center mb-6">
             <div className="inline-flex p-4 rounded-2xl bg-gradient-to-br from-[#5865f2]/20 to-[#eb459e]/20 mb-4">
               <MessageSquare size={48} className="text-white" />
@@ -1276,7 +1286,7 @@ const App: React.FC = () => {
                 onChange={(e) => setEmail(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleAuth()}
                 placeholder="ornek@email.com"
-                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
+                className={`w-full px-4 py-3 ${darkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-gray-300 text-gray-900'} border rounded-lg ${darkMode ? 'placeholder-gray-500' : 'placeholder-gray-400'} focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm`}
               />
             </div>
             <div>
@@ -1290,7 +1300,7 @@ const App: React.FC = () => {
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleAuth()}
                 placeholder="••••••••"
-                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
+                className={`w-full px-4 py-3 ${darkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-gray-300 text-gray-900'} border rounded-lg ${darkMode ? 'placeholder-gray-500' : 'placeholder-gray-400'} focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm`}
               />
             </div>
             {isSignUp && (
@@ -1306,7 +1316,7 @@ const App: React.FC = () => {
                     onChange={(e) => setUsername(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleAuth()}
                     placeholder="Kullanıcı adınızı girin"
-                    className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
+                    className={`w-full px-4 py-3 ${darkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-gray-300 text-gray-900'} border rounded-lg ${darkMode ? 'placeholder-gray-500' : 'placeholder-gray-400'} focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm`}
                   />
                 </div>
                 <div>
@@ -1319,7 +1329,7 @@ const App: React.FC = () => {
                     )}
                     <button
                       onClick={() => avatarInputRef.current?.click()}
-                      className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-lg transition-all hover:scale-105 border border-white/10"
+                      className={`px-4 py-2 ${darkMode ? 'bg-white/5 hover:bg-white/10 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-900'} rounded-lg transition-all hover:scale-105 border ${darkMode ? 'border-white/10' : 'border-gray-300'}`}
                     >
                       <ImageIcon size={20} className="inline mr-2" />
                       Fotoğraf Seç
@@ -1379,13 +1389,13 @@ const App: React.FC = () => {
         {/* Channels List */}
         <div className="flex-1 overflow-y-auto p-3 min-h-0">
           <div className="flex items-center justify-between mb-3">
-            <div className="px-2 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+            <div className={`px-2 py-1 text-xs font-bold ${darkMode ? 'text-gray-400' : 'text-gray-600'} uppercase tracking-wider flex items-center gap-2`}>
               <div className="w-1 h-4 bg-gradient-to-b from-[#5865f2] to-[#eb459e] rounded-full"></div>
               Kanallar
                 </div>
             <button
               onClick={() => setShowNewChannelInput(!showNewChannelInput)}
-              className="p-1.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
+              className={`p-1.5 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
             >
               <Plus size={16} />
             </button>
@@ -1437,10 +1447,10 @@ const App: React.FC = () => {
               <div
                 key={channel.id}
                 onClick={() => setSelectedChannel(channel.id)}
-                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all hover-glow ${
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all hover-glow ${
                   selectedChannel === channel.id 
                     ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] shadow-lg shadow-[#5865f2]/30' 
-                    : 'hover:bg-white/5'
+                    : darkMode ? 'hover:bg-white/5' : 'hover:bg-gray-100'
                 }`}
               >
                 {channel.type === 'text' ? (
@@ -1450,7 +1460,7 @@ const App: React.FC = () => {
                 ) : (
                   <Volume2 size={16} className={selectedChannel === channel.id ? 'text-white' : 'text-gray-400'} />
                 )}
-                <span className={`text-sm truncate font-medium ${selectedChannel === channel.id ? 'text-white' : 'text-gray-300'}`}>
+                <span className={`text-sm truncate font-medium ${selectedChannel === channel.id ? 'text-white' : darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                   {channel.name}
                 </span>
           </div>
@@ -1458,7 +1468,7 @@ const App: React.FC = () => {
       </div>
 
           {/* Users List */}
-          <div className="mt-6 pt-6 border-t border-white/10">
+          <div className={`mt-6 pt-6 border-t ${darkMode ? 'border-white/10' : 'border-gray-200'}`}>
             <div className="px-2 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
               <div className="w-1 h-4 bg-gradient-to-b from-[#5865f2] to-[#eb459e] rounded-full"></div>
               Online — {uniqueUsers.length + 1}
@@ -1467,14 +1477,14 @@ const App: React.FC = () => {
               {uniqueUsers.map((u, idx) => (
                 <div
                   key={idx}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 cursor-pointer transition-all group hover-glow"
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg ${darkMode ? 'hover:bg-white/5' : 'hover:bg-gray-100'} cursor-pointer transition-all group hover-glow`}
                 >
                   <div className="relative">
                     <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-0 group-hover:opacity-50 transition-opacity"></div>
                     <img src={u.avatar} alt={u.username} className="w-9 h-9 rounded-full relative z-10 ring-2 ring-white/10 group-hover:ring-[#5865f2]/50 transition-all" />
                     <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-[#2f3136] shadow-lg shadow-green-500/50"></div>
             </div>
-                  <span className="text-sm text-gray-300 group-hover:text-white font-medium transition truncate">
+                  <span className={`text-sm ${darkMode ? 'text-gray-300 group-hover:text-white' : 'text-gray-700 group-hover:text-gray-900'} font-medium transition truncate`}>
                     {u.username}
                         </span>
                     </div>
@@ -1491,15 +1501,15 @@ const App: React.FC = () => {
             </div>
 
           {/* Courses Section */}
-          <div className="mt-6 pt-6 border-t border-white/10">
+          <div className={`mt-6 pt-6 border-t ${darkMode ? 'border-white/10' : 'border-gray-200'}`}>
             <div className="flex items-center justify-between mb-3">
-              <div className="px-2 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+              <div className={`px-2 py-1 text-xs font-bold ${darkMode ? 'text-gray-400' : 'text-gray-600'} uppercase tracking-wider flex items-center gap-2`}>
                 <div className="w-1 h-4 bg-gradient-to-b from-[#5865f2] to-[#eb459e] rounded-full"></div>
                 Dersler
               </div>
               <button
                 onClick={() => setShowNewCourseInput(!showNewCourseInput)}
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
+                className={`p-1.5 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
               >
                 <Plus size={16} />
               </button>
@@ -1544,39 +1554,49 @@ const App: React.FC = () => {
                 </div>
 
         {/* User Footer */}
-        <div className="h-16 bg-gradient-to-t from-black/40 to-transparent border-t border-white/10 flex items-center justify-between px-3 flex-shrink-0 backdrop-blur-sm">
+        <div className={`h-16 bg-gradient-to-t ${darkMode ? 'from-black/40' : 'from-gray-100/40'} to-transparent border-t ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between px-3 flex-shrink-0 backdrop-blur-sm`}>
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-30"></div>
               <img src={user.avatar} alt={user.username} className="w-10 h-10 rounded-full flex-shrink-0 relative z-10 ring-2 ring-white/10" />
             </div>
-            <span className="text-sm font-bold text-white truncate">{user.username}</span>
+            <span className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-gray-900'} truncate`}>{user.username}</span>
           </div>
           <div className="flex gap-1">
             <button
               onClick={() => setDarkMode(!darkMode)}
-              className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
+              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
               title={darkMode ? 'Açık Tema' : 'Koyu Tema'}
             >
               {darkMode ? <Sun size={18} /> : <Moon size={18} />}
                     </button>
             <button
               onClick={() => setNotificationsEnabled(!notificationsEnabled)}
-              className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
+              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
               title={notificationsEnabled ? 'Bildirimleri Kapat' : 'Bildirimleri Aç'}
             >
               {notificationsEnabled ? <Bell size={18} /> : <BellOff size={18} />}
                     </button>
             <button
               onClick={handleClearChat}
-              className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all hover:scale-110"
+              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-red-400 hover:bg-red-500/10' : 'text-gray-600 hover:text-red-600 hover:bg-red-100'} rounded-lg transition-all hover:scale-110`}
               title="Sohbeti Temizle"
             >
               <Trash2 size={18} />
             </button>
             <button
+              onClick={() => {
+                setEditUsername(user.username);
+                setShowSettings(true);
+              }}
+              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
+              title="Ayarlar"
+            >
+              <Settings size={18} />
+            </button>
+            <button
               onClick={handleLogout}
-              className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
+              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
               title="Çıkış"
             >
               <LogOut size={18} />
@@ -1587,14 +1607,14 @@ const App: React.FC = () => {
 
       {/* Right Sidebar - Courses & Files */}
       {selectedCourse && (
-        <div className="w-64 modern-card border-l border-white/10 flex flex-col md:flex relative z-10">
-          <div className="h-14 border-b border-white/10 flex items-center justify-between px-4 flex-shrink-0 bg-gradient-to-r from-[#5865f2]/20 to-transparent">
-            <span className="font-bold text-white text-sm truncate">
+        <div className={`w-64 modern-card border-l ${darkMode ? 'border-white/10' : 'border-gray-200'} flex flex-col md:flex relative z-10`}>
+          <div className={`h-14 border-b ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between px-4 flex-shrink-0 bg-gradient-to-r from-[#5865f2]/20 to-transparent`}>
+            <span className={`font-bold ${darkMode ? 'text-white' : 'text-gray-900'} text-sm truncate`}>
               {courses.find(c => c.id === selectedCourse)?.name}
             </span>
             <button
               onClick={() => setSelectedCourse(null)}
-              className="p-1.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
+              className={`p-1.5 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
               title="Kapat"
             >
               <X size={18} />
@@ -1623,7 +1643,7 @@ const App: React.FC = () => {
                 <div
                   key={file.id}
                   onClick={() => file.type === 'application/pdf' ? setSelectedPdf(file.url) : window.open(file.url, '_blank')}
-                  className="block p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-all hover-glow cursor-pointer"
+                  className={`block p-3 ${darkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'} rounded-lg transition-all hover-glow cursor-pointer`}
                 >
                   <div className="flex items-center gap-2">
                     <FileText size={16} className="text-gray-400 flex-shrink-0" />
@@ -1642,7 +1662,7 @@ const App: React.FC = () => {
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-gradient-to-br from-[#36393f]/50 to-[#2f3136]/50 backdrop-blur-sm min-w-0 relative z-10">
         {/* Mobile Header */}
-        <div className="h-14 border-b border-white/10 flex items-center justify-between px-4 glass-effect md:hidden flex-shrink-0">
+        <div className={`h-14 border-b ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between px-4 glass-effect md:hidden flex-shrink-0`}>
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="text-gray-400 hover:text-white transition-all hover:scale-110"
@@ -1672,7 +1692,7 @@ const App: React.FC = () => {
                              
         {/* Channel Header */}
         {selectedChannel && (
-          <div className="h-14 border-b border-white/10 flex items-center justify-between px-6 glass-effect flex-shrink-0 hidden md:flex">
+          <div className={`h-14 border-b ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between px-6 glass-effect flex-shrink-0 hidden md:flex`}>
             <div className="flex items-center gap-3">
               <Hash size={20} className="text-gray-400" />
               <span className="font-bold text-white text-lg">
@@ -1700,7 +1720,7 @@ const App: React.FC = () => {
 
         {/* Search Bar */}
         {showSearch && (
-          <div className="px-4 py-3 border-b border-white/10 glass-effect flex-shrink-0">
+          <div className={`px-4 py-3 border-b ${darkMode ? 'border-white/10' : 'border-gray-200'} glass-effect flex-shrink-0`}>
             <div className="flex items-center gap-2">
               <Search size={18} className="text-gray-400" />
               <input
@@ -1708,7 +1728,7 @@ const App: React.FC = () => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Mesajlarda ara..."
-                className="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm text-sm"
+                className={`flex-1 px-3 py-2 ${darkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-gray-300 text-gray-900'} border rounded-lg ${darkMode ? 'placeholder-gray-500' : 'placeholder-gray-400'} focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm text-sm`}
               />
               <button
                 onClick={() => {
@@ -1771,7 +1791,7 @@ const App: React.FC = () => {
                 return (
                 <div
                   key={msg.id}
-                  className={`flex gap-4 group hover:bg-white/5 px-4 py-2 -mx-4 rounded-xl transition-all ${
+                  className={`flex gap-4 group ${darkMode ? 'hover:bg-white/5' : 'hover:bg-gray-100'} px-4 py-2 -mx-4 rounded-xl transition-all ${
                     msg.username === user?.username ? 'bg-[#5865f2]/10' : ''
                   } ${msg.type === 'break' ? 'bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-l-4 border-yellow-500 shadow-lg shadow-yellow-500/20' : ''} ${
                     isMentioned ? 'bg-yellow-500/20 border-l-4 border-yellow-500' : ''
@@ -1791,11 +1811,11 @@ const App: React.FC = () => {
                       <span className={`font-bold text-sm ${
                         msg.username === user?.username 
                           ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] bg-clip-text text-transparent' 
-                          : 'text-white'
+                          : darkMode ? 'text-white' : 'text-gray-900'
                       }`}>
                         {msg.username === user?.username ? 'Sen' : msg.username}
                       </span>
-                      <span className="text-xs text-gray-500">
+                      <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
                         {new Date(msg.timestamp).toLocaleTimeString('tr-TR', {
                           hour: '2-digit',
                           minute: '2-digit'
@@ -1844,36 +1864,37 @@ const App: React.FC = () => {
                         }}
                       />
                     )}
+                    {/* Reactions - shown above message content */}
+                    {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                      <div className="flex gap-1 flex-wrap mb-2">
+                        {Object.entries(msg.reactions).map(([emoji, users]) => {
+                          const userList = Array.isArray(users) ? users : [];
+                          const hasReacted = user && userList.includes(user.username);
+                          return (
+                            <button
+                              key={emoji}
+                              onClick={() => {
+                                if (user && selectedChannel) {
+                                  addReaction(selectedChannel, msg.id, emoji, user.username);
+                                }
+                              }}
+                              className={`px-2 py-1 rounded flex items-center gap-1 text-xs transition ${
+                                hasReacted 
+                                  ? 'bg-[#5865f2]/30 hover:bg-[#5865f2]/40' 
+                                  : darkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'
+                              } ${darkMode ? 'text-white' : 'text-gray-700'}`}
+                            >
+                              <span>{emoji}</span>
+                              <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>{userList.length}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     <div className="flex items-center gap-2 mt-2">
-                      {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                        <div className="flex gap-1 flex-wrap">
-                          {Object.entries(msg.reactions).map(([emoji, users]) => {
-                            const userList = Array.isArray(users) ? users : [];
-                            const hasReacted = user && userList.includes(user.username);
-                            return (
-                              <button
-                                key={emoji}
-                                onClick={() => {
-                                  if (user && selectedChannel) {
-                                    addReaction(selectedChannel, msg.id, emoji, user.username);
-                                  }
-                                }}
-                                className={`px-2 py-1 rounded flex items-center gap-1 text-xs transition ${
-                                  hasReacted 
-                                    ? 'bg-[#5865f2]/30 hover:bg-[#5865f2]/40' 
-                                    : 'bg-white/5 hover:bg-white/10'
-                                }`}
-                              >
-                                <span>{emoji}</span>
-                                <span className="text-gray-400">{userList.length}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
                       <button
                         onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
-                        className="px-2 py-1 text-gray-400 hover:text-white hover:bg-white/5 rounded text-xs transition opacity-0 group-hover:opacity-100"
+                        className={`px-2 py-1 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded text-xs transition opacity-0 group-hover:opacity-100`}
                         title="Tepki Ekle"
                       >
                         <Smile size={14} />
@@ -2158,17 +2179,17 @@ const App: React.FC = () => {
         .animate-slideIn {
           animation: slideIn 0.3s ease-out;
         }
-        .glass-effect {
-          background: rgba(47, 49, 54, 0.8);
-          backdrop-filter: blur(10px);
-          -webkit-backdrop-filter: blur(10px);
-        }
         .modern-card {
-          background: linear-gradient(135deg, rgba(47, 49, 54, 0.9) 0%, rgba(54, 57, 63, 0.9) 100%);
+          background: ${darkMode ? 'linear-gradient(135deg, rgba(47, 49, 54, 0.9) 0%, rgba(54, 57, 63, 0.9) 100%)' : 'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(249, 250, 251, 0.95) 100%)'};
           backdrop-filter: blur(20px);
           -webkit-backdrop-filter: blur(20px);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+          border: 1px solid ${darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'};
+          box-shadow: ${darkMode ? '0 8px 32px 0 rgba(0, 0, 0, 0.37)' : '0 8px 32px 0 rgba(0, 0, 0, 0.1)'};
+        }
+        .glass-effect {
+          background: ${darkMode ? 'rgba(47, 49, 54, 0.8)' : 'rgba(255, 255, 255, 0.8)'};
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
         }
         .hover-glow:hover {
           box-shadow: 0 0 15px rgba(88, 101, 242, 0.4);
@@ -2201,6 +2222,87 @@ const App: React.FC = () => {
                   {emoji}
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Settings Modal */}
+      {showSettings && user && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowSettings(false)}>
+          <div className={`${darkMode ? 'bg-[#2f3136]' : 'bg-white'} rounded-lg shadow-2xl w-full max-w-md border ${darkMode ? 'border-white/10' : 'border-gray-200'} overflow-hidden`} onClick={(e) => e.stopPropagation()}>
+            <div className={`h-32 bg-gradient-to-r from-[#5865f2] to-[#eb459e] relative`}>
+              <button
+                onClick={() => setShowSettings(false)}
+                className="absolute top-4 right-4 w-8 h-8 bg-black/30 hover:bg-black/50 rounded-full flex items-center justify-center transition text-white"
+              >
+                <X size={18} />
+              </button>
+              <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2">
+                <div className="relative">
+                  <img
+                    src={user.avatar}
+                    alt={user.username}
+                    className={`w-24 h-24 rounded-full border-4 ${darkMode ? 'border-[#2f3136]' : 'border-white'}`}
+                  />
+                  <button
+                    onClick={() => avatarInputRef.current?.click()}
+                    className="absolute bottom-0 right-0 w-8 h-8 bg-[#5865f2] rounded-full flex items-center justify-center hover:bg-[#4752c4] transition border-2 border-[#2f3136]"
+                    title="Fotoğraf Değiştir"
+                  >
+                    <ImageIcon size={14} className="text-white" />
+                  </button>
+                </div>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleAvatarChange}
+                  className="hidden"
+                />
+              </div>
+            </div>
+            <div className="pt-16 pb-6 px-6">
+              <div className="mb-4">
+                <label className={`block text-sm font-semibold mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Kullanıcı Adı
+                </label>
+                <input
+                  type="text"
+                  value={editUsername}
+                  onChange={(e) => setEditUsername(e.target.value)}
+                  placeholder="Kullanıcı adınız"
+                  className={`w-full px-4 py-2 ${darkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-gray-100 border-gray-300 text-gray-900'} border rounded-lg ${darkMode ? 'placeholder-gray-500' : 'placeholder-gray-400'} focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition`}
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    if (!user || !editUsername.trim()) return;
+                    setIsUpdatingProfile(true);
+                    try {
+                      await updateUserProfile(user.userId, { username: editUsername.trim() });
+                      setUser({ ...user, username: editUsername.trim() });
+                      setShowSettings(false);
+                    } catch (error) {
+                      console.error('Profil güncellenirken hata:', error);
+                      alert('Profil güncellenirken bir hata oluştu.');
+                    } finally {
+                      setIsUpdatingProfile(false);
+                    }
+                  }}
+                  disabled={!editUsername.trim() || isUpdatingProfile || editUsername === user.username}
+                  className="flex-1 px-4 py-2 bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white rounded-lg font-semibold transition disabled:bg-gray-600 disabled:cursor-not-allowed"
+                >
+                  {isUpdatingProfile ? 'Güncelleniyor...' : 'Kaydet'}
+                </button>
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className={`px-4 py-2 ${darkMode ? 'bg-white/5 hover:bg-white/10 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-900'} rounded-lg font-semibold transition`}
+                >
+                  İptal
+                </button>
+              </div>
             </div>
           </div>
         </div>
