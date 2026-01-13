@@ -114,77 +114,137 @@ const playNotificationSound = () => {
 // GIPHY API Key
 const GIPHY_API_KEY = 'GlVGYHkr3WSBnllca54iNt0yFbjz7L65';
 
-// Whiteboard Component
+// Whiteboard Component with Infinite Canvas
 const Whiteboard: React.FC<{
   channelId: string;
   user: UserData;
   strokes: WhiteboardStroke[];
 }> = ({ channelId, user, strokes }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
   const [currentTool, setCurrentTool] = useState<'pen' | 'eraser'>('pen');
   const [currentColor, setCurrentColor] = useState('#ffffff');
   const [lineWidth, setLineWidth] = useState(3);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
   const currentStrokeRef = useRef<Array<{ x: number; y: number }>>([]);
+  const lastPanPointRef = useRef<{ x: number; y: number } | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   const colors = ['#ffffff', '#000000', '#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
 
-  // Draw all strokes on canvas
+  // Draw all strokes on canvas with pan and zoom
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
-    const updateCanvas = () => {
-      const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      
-      // Set actual canvas size
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      
-      // Scale context for high DPI displays
-      ctx.scale(dpr, dpr);
-      
-      // Set display size
-      canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
+    const drawStrokes = () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
 
-      // Clear canvas
-      ctx.fillStyle = '#1a1c1f';
-      ctx.fillRect(0, 0, rect.width, rect.height);
+      animationFrameRef.current = requestAnimationFrame(() => {
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
 
-      // Draw all strokes
-      strokes.forEach((stroke) => {
-        if (stroke.points.length < 2) return;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.scale(dpr, dpr);
+        canvas.style.width = `${rect.width}px`;
+        canvas.style.height = `${rect.height}px`;
 
-        ctx.beginPath();
-        ctx.strokeStyle = stroke.tool === 'eraser' ? '#1a1c1f' : stroke.color;
-        ctx.lineWidth = stroke.lineWidth;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
+        // Clear with background
+        ctx.fillStyle = '#1a1c1f';
+        ctx.fillRect(0, 0, rect.width, rect.height);
 
-        ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-        for (let i = 1; i < stroke.points.length; i++) {
-          ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+        // Apply transformations
+        ctx.save();
+        ctx.translate(panOffset.x, panOffset.y);
+        ctx.scale(zoom, zoom);
+
+        // Draw grid
+        const gridSize = 50;
+        const startX = Math.floor((-panOffset.x / zoom) / gridSize) * gridSize;
+        const startY = Math.floor((-panOffset.y / zoom) / gridSize) * gridSize;
+        const endX = Math.ceil((rect.width - panOffset.x) / zoom / gridSize) * gridSize;
+        const endY = Math.ceil((rect.height - panOffset.y) / zoom / gridSize) * gridSize;
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.lineWidth = 1;
+
+        for (let x = startX; x <= endX; x += gridSize) {
+          ctx.beginPath();
+          ctx.moveTo(x, startY);
+          ctx.lineTo(x, endY);
+          ctx.stroke();
         }
-        ctx.stroke();
+
+        for (let y = startY; y <= endY; y += gridSize) {
+          ctx.beginPath();
+          ctx.moveTo(startX, y);
+          ctx.lineTo(endX, y);
+          ctx.stroke();
+        }
+
+        // Calculate visible bounds for culling
+        const visibleBounds = {
+          minX: (-panOffset.x) / zoom - 100,
+          minY: (-panOffset.y) / zoom - 100,
+          maxX: (rect.width - panOffset.x) / zoom + 100,
+          maxY: (rect.height - panOffset.y) / zoom + 100
+        };
+
+        // Draw only visible strokes
+        strokes.forEach((stroke) => {
+          if (stroke.points.length < 2) return;
+
+          // Simple bounds check
+          let isVisible = false;
+          for (const point of stroke.points) {
+            if (point.x >= visibleBounds.minX && point.x <= visibleBounds.maxX &&
+                point.y >= visibleBounds.minY && point.y <= visibleBounds.maxY) {
+              isVisible = true;
+              break;
+            }
+          }
+
+          if (!isVisible) return;
+
+          ctx.beginPath();
+          ctx.strokeStyle = stroke.tool === 'eraser' ? '#1a1c1f' : stroke.color;
+          ctx.lineWidth = stroke.lineWidth;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+
+          ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+          for (let i = 1; i < stroke.points.length; i++) {
+            ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+          }
+          ctx.stroke();
+        });
+
+        ctx.restore();
       });
     };
 
-    updateCanvas();
+    drawStrokes();
+    const resizeObserver = new ResizeObserver(drawStrokes);
+    resizeObserver.observe(canvas);
 
-    const handleResize = () => {
-      updateCanvas();
+    return () => {
+      resizeObserver.disconnect();
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
     };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [strokes]);
+  }, [strokes, zoom, panOffset]);
 
   const getPointFromEvent = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -194,9 +254,14 @@ const Whiteboard: React.FC<{
     const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0]?.clientY : e.clientY;
 
+    if (clientX === undefined || clientY === undefined) return null;
+
+    const screenX = clientX - rect.left;
+    const screenY = clientY - rect.top;
+    
     return {
-      x: clientX - rect.left,
-      y: clientY - rect.top
+      x: (screenX - panOffset.x) / zoom,
+      y: (screenY - panOffset.y) / zoom
     };
   };
 
@@ -253,17 +318,56 @@ const Whiteboard: React.FC<{
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const point = getPointFromEvent(e);
-    if (point) startDrawing(point);
+    if (e.button === 1 || e.shiftKey || e.ctrlKey) {
+      setIsPanning(true);
+      lastPanPointRef.current = { x: e.clientX, y: e.clientY };
+      e.preventDefault();
+    } else {
+      const point = getPointFromEvent(e);
+      if (point) startDrawing(point);
+    }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const point = getPointFromEvent(e);
-    if (point) draw(point);
-    };
+    if (isPanning && lastPanPointRef.current) {
+      const dx = e.clientX - lastPanPointRef.current.x;
+      const dy = e.clientY - lastPanPointRef.current.y;
+      setPanOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      lastPanPointRef.current = { x: e.clientX, y: e.clientY };
+    } else {
+      const point = getPointFromEvent(e);
+      if (point) draw(point);
+    }
+  };
 
-    const handleMouseUp = () => {
+  const handleMouseUp = () => {
+    if (isPanning) {
+      setIsPanning(false);
+      lastPanPointRef.current = null;
+    }
     stopDrawing();
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    const newZoom = Math.max(0.1, Math.min(5, zoom * zoomFactor));
+
+    const worldX = (mouseX - panOffset.x) / zoom;
+    const worldY = (mouseY - panOffset.y) / zoom;
+    
+    setPanOffset({
+      x: mouseX - worldX * newZoom,
+      y: mouseY - worldY * newZoom
+    });
+    setZoom(newZoom);
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
@@ -292,6 +396,11 @@ const Whiteboard: React.FC<{
     }
   };
 
+  const handleResetView = () => {
+    setZoom(1);
+    setPanOffset({ x: 0, y: 0 });
+  };
+
   return (
     <div className={`flex flex-col h-full ${isFullscreen ? 'fixed inset-0 z-50 bg-[#1a1c1f]' : ''}`}>
       {/* Toolbar */}
@@ -317,14 +426,13 @@ const Whiteboard: React.FC<{
               <button
                 key={color}
                 onClick={() => setCurrentColor(color)}
-                className={`w-8 h-8 rounded-lg border-2 transition-all ${
-                  currentColor === color ? 'border-white scale-110' : 'border-transparent hover:scale-105'
-                }`}
+                className={`w-8 h-8 rounded-lg border-2 transition-all ${currentColor === color ? 'border-white scale-110' : 'border-transparent hover:scale-105'
+                  }`}
                 style={{ backgroundColor: color }}
                 title={color}
               />
             ))}
-        </div>
+          </div>
           <div className="w-px h-6 bg-white/10 mx-1"></div>
           <div className="flex items-center gap-2">
             <Minus size={16} className="text-gray-400" />
@@ -349,6 +457,16 @@ const Whiteboard: React.FC<{
             {isFullscreen ? <Minus size={20} /> : <Maximize size={20} />}
           </button>
           <button
+            onClick={handleResetView}
+            className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+            title="Görünümü Sıfırla"
+          >
+            <Maximize size={20} />
+          </button>
+          <div className="text-xs text-gray-400 px-2">
+            Zoom: {(zoom * 100).toFixed(0)}%
+          </div>
+          <button
             onClick={handleClear}
             className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
             title="Temizle"
@@ -357,21 +475,27 @@ const Whiteboard: React.FC<{
           </button>
         </div>
       </div>
-      
+
       {/* Canvas */}
-      <div className="flex-1 relative overflow-hidden bg-[#1a1c1f]">
+      <div ref={containerRef} className="flex-1 relative overflow-hidden bg-[#1a1c1f]">
         <canvas
           ref={canvasRef}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          onWheel={handleWheel}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className="absolute inset-0 w-full h-full cursor-crosshair"
+          className={`absolute inset-0 w-full h-full ${isPanning ? 'cursor-grabbing' : 'cursor-crosshair'}`}
           style={{ touchAction: 'none' }}
         />
+        {/* Instructions */}
+        <div className="absolute bottom-4 left-4 bg-black/50 backdrop-blur-sm rounded-lg px-3 py-2 text-xs text-gray-300 pointer-events-none">
+          <div>🖱️ Shift/Ctrl + Sürükle: Kaydır</div>
+          <div>🖱️ Tekerlek: Yakınlaştır/Uzaklaştır</div>
+        </div>
       </div>
     </div>
   );
@@ -451,6 +575,7 @@ const PdfViewerWithDrawing: React.FC<{
     return () => resizeObserver.disconnect();
   }, [strokes]);
 
+  // Convert screen coordinates to world coordinates
   const getPointFromEvent = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>): { x: number; y: number } | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -461,9 +586,12 @@ const PdfViewerWithDrawing: React.FC<{
 
     if (clientX === undefined || clientY === undefined) return null;
 
+      const screenX = clientX - rect.left;
+    const screenY = clientY - rect.top;
+    
     return {
-      x: (clientX - rect.left) * (canvas.width / rect.width / (window.devicePixelRatio || 1)),
-      y: (clientY - rect.top) * (canvas.height / rect.height / (window.devicePixelRatio || 1))
+      x: screenX * (canvas.width / rect.width / (window.devicePixelRatio || 1)),
+      y: screenY * (canvas.height / rect.height / (window.devicePixelRatio || 1))
     };
   };
 
@@ -594,9 +722,8 @@ const PdfViewerWithDrawing: React.FC<{
                 <button
                   key={color}
                   onClick={() => setCurrentColor(color)}
-                  className={`w-8 h-8 rounded-lg border-2 transition-all ${
-                    currentColor === color ? 'border-white scale-110' : 'border-transparent hover:scale-105'
-                  }`}
+                  className={`w-8 h-8 rounded-lg border-2 transition-all ${currentColor === color ? 'border-white scale-110' : 'border-transparent hover:scale-105'
+                    }`}
                   style={{ backgroundColor: color }}
                   title={color}
                 />
@@ -727,7 +854,7 @@ const GiphyPicker: React.FC<{
       const url = query === 'trending' || !query
         ? `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=20`
         : `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(query)}&limit=20`;
-      
+
       const response = await fetch(url);
       const data = await response.json();
       setGifs(data.data || []);
@@ -760,7 +887,7 @@ const GiphyPicker: React.FC<{
             <X size={24} />
           </button>
         </div>
-        
+
         <div className="p-4 border-b border-[#202225]">
           <form onSubmit={handleSearch} className="flex gap-2">
             <input
@@ -813,13 +940,13 @@ const GiphyPicker: React.FC<{
 // User mention parser - converts @username to highlighted mentions
 const parseMentions = (text: string, allUsers: Array<{ username: string; avatar: string }>, currentUsername?: string): { html: string; mentions: string[] } => {
   if (!text) return { html: '', mentions: [] };
-  
+
   // Find all @mentions including @all
   const mentionRegex = /@(\w+)/g;
   let result = text;
   const mentions: string[] = [];
   const foundMentions = new Set<string>();
-  
+
   let match;
   while ((match = mentionRegex.exec(text)) !== null) {
     const mention = match[1].toLowerCase();
@@ -834,7 +961,7 @@ const parseMentions = (text: string, allUsers: Array<{ username: string; avatar:
       }
     }
   }
-  
+
   // Replace mentions with highlighted HTML
   foundMentions.forEach(mention => {
     if (mention === '@all') {
@@ -848,26 +975,26 @@ const parseMentions = (text: string, allUsers: Array<{ username: string; avatar:
       }
     }
   });
-  
+
   return { html: result, mentions };
 };
 
 // HTML sanitizer - allows only safe HTML tags
 const sanitizeHTML = (html: string): string => {
   if (!html) return '';
-  
+
   // Allowed tags
   const allowedTags = ['b', 'strong', 'i', 'em', 'u', 's', 'strike', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'a', 'span', 'div'];
-  
+
   try {
     // Create a temporary div to parse HTML
     const temp = document.createElement('div');
     temp.innerHTML = html;
-    
+
     // Remove script tags and event handlers
     const scripts = temp.querySelectorAll('script, iframe, object, embed, form, input, button');
     scripts.forEach(script => script.remove());
-    
+
     // Remove all tags that are not in allowed list
     const allElements = temp.querySelectorAll('*');
     allElements.forEach(el => {
@@ -902,7 +1029,7 @@ const sanitizeHTML = (html: string): string => {
         attrsToRemove.forEach(attr => el.removeAttribute(attr));
       }
     });
-    
+
     return temp.innerHTML;
   } catch (error) {
     console.error('Error sanitizing HTML:', error);
@@ -967,7 +1094,7 @@ const App: React.FC = () => {
       if (firebaseUser) {
         // Get user profile from Firestore
         const profile = await getUserProfile(firebaseUser.uid);
-        
+
         // Always use username from profile if it exists, never use email directly
         if (profile && profile.username && profile.username.trim() !== '') {
           // Only update if user state doesn't already have the correct username
@@ -987,7 +1114,7 @@ const App: React.FC = () => {
           // If no profile exists or username is empty, use displayName or create from email
           // But never use full email as username
           let finalUsername = firebaseUser.displayName;
-          
+
           if (!finalUsername || finalUsername.trim() === '') {
             // Extract username from email (part before @)
             if (firebaseUser.email) {
@@ -1000,9 +1127,9 @@ const App: React.FC = () => {
               finalUsername = `user_${firebaseUser.uid.slice(0, 8)}`;
             }
           }
-          
+
           const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(finalUsername)}&background=5865f2&color=fff&size=128`;
-          
+
           // Only update if user state doesn't already have a username
           setUser(prevUser => {
             if (prevUser && prevUser.userId === firebaseUser.uid && prevUser.username && prevUser.username.trim() !== '') {
@@ -1015,7 +1142,7 @@ const App: React.FC = () => {
               email: firebaseUser.email || undefined
             };
           });
-          
+
           // Save to Firestore if profile doesn't exist or username is missing
           if (!profile || !profile.username || profile.username.trim() === '') {
             await saveUser(firebaseUser.uid, {
@@ -1096,7 +1223,7 @@ const App: React.FC = () => {
     const unsubscribe = subscribeToMessages(selectedChannel, (firebaseMessages) => {
       const prevLength = prevMessagesLengthRef.current;
       setMessages(firebaseMessages);
-      
+
       if (firebaseMessages.length > prevLength && prevLength > 0) {
         const lastMessage = firebaseMessages[firebaseMessages.length - 1];
         if (lastMessage.username !== user.username && notificationsEnabled) {
@@ -1105,7 +1232,7 @@ const App: React.FC = () => {
           } else {
             playNotificationSound();
           }
-          
+
           let messageText = '';
           if (lastMessage.type === 'break') {
             messageText = lastMessage.text || '🚬 Sigara içme molası!';
@@ -1116,19 +1243,19 @@ const App: React.FC = () => {
           } else if (lastMessage.text) {
             messageText = lastMessage.text;
           }
-          
+
           setNotification({
             username: lastMessage.username,
             text: messageText
           });
-          
+
           setTimeout(() => {
             setNotification(null);
           }, 5000);
-          
+
           if ('Notification' in window && Notification.permission === 'granted') {
-            const notificationTitle = lastMessage.type === 'break' 
-              ? '🚬 Mola!' 
+            const notificationTitle = lastMessage.type === 'break'
+              ? '🚬 Mola!'
               : `Yeni mesaj: ${lastMessage.username}`;
             new Notification(notificationTitle, {
               body: messageText,
@@ -1137,7 +1264,7 @@ const App: React.FC = () => {
           }
         }
       }
-      
+
       prevMessagesLengthRef.current = firebaseMessages.length;
     });
 
@@ -1202,7 +1329,7 @@ const App: React.FC = () => {
         alert('Profil resmi çok büyük. Maksimum 2MB olmalıdır.');
         return;
       }
-      
+
       // For preview, use base64
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -1212,15 +1339,15 @@ const App: React.FC = () => {
         }
       };
       reader.readAsDataURL(file);
-      
+
       // Upload to Firebase Storage if user is logged in
       if (user) {
         setIsLoading(true);
         try {
           const avatarUrl = await uploadImage(file);
-          const updatedUser: UserData = { 
-            ...user, 
-            avatar: avatarUrl 
+          const updatedUser: UserData = {
+            ...user,
+            avatar: avatarUrl
           };
           setUser(updatedUser);
           setAvatar(avatarUrl);
@@ -1242,7 +1369,7 @@ const App: React.FC = () => {
       setAuthError('Email ve şifre gereklidir.');
       return;
     }
-    
+
     if (isSignUp && !username.trim()) {
       setAuthError('Kayıt olmak için kullanıcı adı gereklidir.');
       return;
@@ -1254,7 +1381,7 @@ const App: React.FC = () => {
     try {
       if (isSignUp) {
         let finalAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(username.trim())}&background=5865f2&color=fff&size=128`;
-        
+
         // If avatar is base64, upload it to Firebase Storage first
         if (avatar && avatar.startsWith('data:image')) {
           try {
@@ -1270,9 +1397,9 @@ const App: React.FC = () => {
         } else if (avatar && avatar.startsWith('http')) {
           finalAvatar = avatar;
         }
-        
+
         const firebaseUser = await signUp(email.trim(), password, username.trim(), finalAvatar);
-        
+
         // Immediately set user state with the username from signup
         // This ensures the username is used right away, before auth listener fires
         setUser({
@@ -1281,7 +1408,7 @@ const App: React.FC = () => {
           userId: firebaseUser.uid,
           email: email.trim()
         });
-        
+
         setEmail('');
         setPassword('');
         setUsername('');
@@ -1448,7 +1575,7 @@ const App: React.FC = () => {
         // Parse mentions from message
         const allUsers = [...uniqueUsers, ...(user ? [{ username: user.username, avatar: user.avatar }] : [])];
         const mentionResult = parseMentions(inputMessage.trim(), allUsers, user?.username);
-        
+
         await sendMessage(selectedChannel, {
           username: user.username,
           avatar: user.avatar,
@@ -1539,15 +1666,15 @@ const App: React.FC = () => {
 
   // Filter messages by search
   const filteredMessages = searchQuery.trim()
-    ? messages.filter(msg => 
-        msg.text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        msg.username.toLowerCase().includes(searchQuery.toLowerCase())
-      )
+    ? messages.filter(msg =>
+      msg.text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      msg.username.toLowerCase().includes(searchQuery.toLowerCase())
+    )
     : messages;
 
   // If user not logged in, show inline login
   if (!user) {
-  return (
+    return (
       <div className="h-screen flex items-center justify-center bg-gradient-to-br from-[#1a1c1f] via-[#2f3136] to-[#36393f] p-4">
         <div className={`w-full max-w-md modern-card rounded-xl p-8 border ${darkMode ? 'border-white/10' : 'border-gray-200'} shadow-2xl`}>
           <div className="text-center mb-6">
@@ -1662,9 +1789,9 @@ const App: React.FC = () => {
       {/* Animated Background Elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-float"></div>
-        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-float" style={{animationDelay: '1s'}}></div>
+        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-float" style={{ animationDelay: '1s' }}></div>
       </div>
-      
+
       {/* Left Sidebar - Channels */}
       <div className={`${sidebarOpen ? 'w-60' : 'w-0'} modern-card flex flex-col transition-all duration-300 overflow-hidden md:flex relative z-10`}>
         <div className="h-14 border-b border-white/10 flex items-center px-4 flex-shrink-0 bg-gradient-to-r from-[#5865f2]/20 to-transparent">
@@ -1674,7 +1801,7 @@ const App: React.FC = () => {
             </div>
             <span className={`font-bold ${darkMode ? 'text-white' : 'text-gray-900'} text-sm tracking-wide`}>Kutuphane Chat</span>
           </div>
-      </div>
+        </div>
 
         {/* Channels List */}
         <div className="flex-1 overflow-y-auto p-3 min-h-0">
@@ -1682,14 +1809,14 @@ const App: React.FC = () => {
             <div className={`px-2 py-1 text-xs font-bold ${darkMode ? 'text-gray-400' : 'text-gray-600'} uppercase tracking-wider flex items-center gap-2`}>
               <div className="w-1 h-4 bg-gradient-to-b from-[#5865f2] to-[#eb459e] rounded-full"></div>
               Kanallar
-                </div>
+            </div>
             <button
               onClick={() => setShowNewChannelInput(!showNewChannelInput)}
               className={`p-1.5 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
             >
               <Plus size={16} />
             </button>
-                </div>
+          </div>
           {showNewChannelInput && (
             <div className="mb-3 space-y-2">
               <input
@@ -1703,27 +1830,25 @@ const App: React.FC = () => {
               <div className="flex gap-2">
                 <button
                   onClick={() => setNewChannelType('text')}
-                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
-                    newChannelType === 'text'
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${newChannelType === 'text'
                       ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] text-white shadow-lg shadow-[#5865f2]/30'
                       : 'bg-white/5 text-gray-400 hover:text-white'
-                  }`}
+                    }`}
                 >
                   <Hash size={14} className="inline mr-1" />
                   Metin
                 </button>
                 <button
                   onClick={() => setNewChannelType('whiteboard')}
-                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
-                    newChannelType === 'whiteboard'
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${newChannelType === 'whiteboard'
                       ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] text-white shadow-lg shadow-[#5865f2]/30'
                       : 'bg-white/5 text-gray-400 hover:text-white'
-                  }`}
+                    }`}
                 >
                   <PenTool size={14} className="inline mr-1" />
                   Whiteboard
                 </button>
-                </div>
+              </div>
               <button
                 onClick={handleCreateChannel}
                 className="w-full px-4 py-2 bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white rounded-lg text-sm font-semibold transition-all hover:scale-105 shadow-lg shadow-[#5865f2]/30"
@@ -1737,11 +1862,10 @@ const App: React.FC = () => {
               <div
                 key={channel.id}
                 onClick={() => setSelectedChannel(channel.id)}
-                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all hover-glow ${
-                  selectedChannel === channel.id 
-                    ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] shadow-lg shadow-[#5865f2]/30' 
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all hover-glow ${selectedChannel === channel.id
+                    ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] shadow-lg shadow-[#5865f2]/30'
                     : darkMode ? 'hover:bg-white/5' : 'hover:bg-gray-100'
-                }`}
+                  }`}
               >
                 {channel.type === 'text' ? (
                   <Hash size={16} className={selectedChannel === channel.id ? 'text-white' : 'text-gray-400'} />
@@ -1753,9 +1877,9 @@ const App: React.FC = () => {
                 <span className={`text-sm truncate font-medium ${selectedChannel === channel.id ? 'text-white' : darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                   {channel.name}
                 </span>
-          </div>
+              </div>
             ))}
-      </div>
+          </div>
 
           {/* Users List */}
           <div className={`mt-6 pt-6 border-t ${darkMode ? 'border-white/10' : 'border-gray-200'}`}>
@@ -1773,22 +1897,22 @@ const App: React.FC = () => {
                     <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-0 group-hover:opacity-50 transition-opacity"></div>
                     <img src={u.avatar} alt={u.username} className="w-9 h-9 rounded-full relative z-10 ring-2 ring-white/10 group-hover:ring-[#5865f2]/50 transition-all" />
                     <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-[#2f3136] shadow-lg shadow-green-500/50"></div>
-            </div>
+                  </div>
                   <span className={`text-sm ${darkMode ? 'text-gray-300 group-hover:text-white' : 'text-gray-700 group-hover:text-gray-900'} font-medium transition truncate`}>
                     {u.username}
-                        </span>
-                    </div>
+                  </span>
+                </div>
               ))}
               <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gradient-to-r from-[#5865f2]/20 to-[#eb459e]/20 border border-[#5865f2]/30 mt-2">
                 <div className="relative">
                   <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-30"></div>
                   <img src={user.avatar} alt={user.username} className="w-9 h-9 rounded-full relative z-10 ring-2 ring-[#5865f2]/50" />
                   <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-[#2f3136] shadow-lg shadow-green-500/50"></div>
-                    </div>
-                <span className="text-sm text-white font-bold truncate">{user.username}</span>
                 </div>
+                <span className="text-sm text-white font-bold truncate">{user.username}</span>
+              </div>
             </div>
-            </div>
+          </div>
 
           {/* Courses Section */}
           <div className={`mt-6 pt-6 border-t ${darkMode ? 'border-white/10' : 'border-gray-200'}`}>
@@ -1806,7 +1930,7 @@ const App: React.FC = () => {
             </div>
             {showNewCourseInput && (
               <div className="mb-3 flex gap-2">
-                        <input 
+                <input
                   type="text"
                   value={newCourseName}
                   onChange={(e) => setNewCourseName(e.target.value)}
@@ -1827,21 +1951,20 @@ const App: React.FC = () => {
                 <div
                   key={course.id}
                   onClick={() => setSelectedCourse(course.id)}
-                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all hover-glow ${
-                    selectedCourse === course.id 
-                      ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] shadow-lg shadow-[#5865f2]/30' 
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all hover-glow ${selectedCourse === course.id
+                      ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] shadow-lg shadow-[#5865f2]/30'
                       : 'hover:bg-white/5'
-                  }`}
+                    }`}
                 >
                   <BookOpen size={16} className={selectedCourse === course.id ? 'text-white' : 'text-gray-400'} />
                   <span className={`text-sm truncate font-medium ${selectedCourse === course.id ? 'text-white' : 'text-gray-300'}`}>
                     {course.name}
-                        </span>
-                    </div>
-              ))}
-                    </div>
+                  </span>
                 </div>
+              ))}
             </div>
+          </div>
+        </div>
 
         {/* User Footer */}
         <div className={`h-16 bg-gradient-to-t ${darkMode ? 'from-black/40' : 'from-gray-100/40'} to-transparent border-t ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between px-2 md:px-3 flex-shrink-0 backdrop-blur-sm`}>
@@ -1918,7 +2041,7 @@ const App: React.FC = () => {
               <FileText size={16} />
               PDF/Dosya Yükle
             </button>
-                        <input 
+            <input
               ref={courseFileInputRef}
               type="file"
               accept=".pdf,.doc,.docx,.txt"
@@ -1941,11 +2064,11 @@ const App: React.FC = () => {
                       <div className={`text-sm ${darkMode ? 'text-white' : 'text-gray-800'} truncate font-medium`}>{file.name}</div>
                       <div className="text-xs text-gray-400">{file.uploadedBy}</div>
                     </div>
-                </div>
+                  </div>
                 </div>
               ))}
-                            </div>
-                        </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1958,7 +2081,7 @@ const App: React.FC = () => {
             className="text-gray-400 hover:text-white transition-all hover:scale-110"
           >
             <Hash size={20} />
-                    </button>
+          </button>
           <span className="font-bold text-white tracking-wide">
             {channels.find(c => c.id === selectedChannel)?.name || 'Kanal Seç'}
           </span>
@@ -1968,18 +2091,18 @@ const App: React.FC = () => {
               className="text-gray-400 hover:text-white transition-all"
             >
               <Search size={20} />
-                    </button>
+            </button>
             {selectedCourse && (
               <button
                 onClick={() => setSelectedCourse(null)}
                 className="text-gray-400 hover:text-white transition-all"
               >
                 <X size={20} />
-                    </button>
+              </button>
             )}
-                </div>
-            </div>
-                             
+          </div>
+        </div>
+
         {/* Channel Header */}
         {selectedChannel && (
           <div className={`h-14 border-b ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between px-6 glass-effect flex-shrink-0 hidden md:flex`}>
@@ -1988,7 +2111,7 @@ const App: React.FC = () => {
               <span className="font-bold text-white text-lg">
                 {channels.find(c => c.id === selectedChannel)?.name}
               </span>
-                             </div>
+            </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowSearch(!showSearch)}
@@ -2029,8 +2152,8 @@ const App: React.FC = () => {
               >
                 <X size={18} />
               </button>
-                             </div>
-                        </div>
+            </div>
+          </div>
         )}
 
         {/* Messages Area / Whiteboard */}
@@ -2046,8 +2169,8 @@ const App: React.FC = () => {
               <div className="text-center">
                 <p className="text-xl font-bold text-gray-300 mb-2">Giriş Yapın</p>
                 <p className="text-sm text-gray-500">Whiteboard kullanmak için giriş yapmalısınız</p>
-                        </div>
-                    </div>
+              </div>
+            </div>
           )
         ) : (
           <div className="flex-1 overflow-y-auto p-4 md:p-6 min-h-0">
@@ -2062,148 +2185,144 @@ const App: React.FC = () => {
                 </div>
               </div>
             ) : messages.length === 0 ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <div className="inline-flex p-4 rounded-2xl bg-gradient-to-br from-[#5865f2]/20 to-[#eb459e]/20 mb-4">
-                  <MessageSquare size={48} className="text-gray-400" />
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center">
+                  <div className="inline-flex p-4 rounded-2xl bg-gradient-to-br from-[#5865f2]/20 to-[#eb459e]/20 mb-4">
+                    <MessageSquare size={48} className="text-gray-400" />
+                  </div>
+                  <p className="text-xl font-bold text-gray-300 mb-2">Henüz mesaj yok</p>
+                  <p className="text-sm text-gray-500">İlk mesajınızı göndererek sohbete başlayın!</p>
                 </div>
-                <p className="text-xl font-bold text-gray-300 mb-2">Henüz mesaj yok</p>
-                <p className="text-sm text-gray-500">İlk mesajınızı göndererek sohbete başlayın!</p>
               </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {filteredMessages.map((msg) => {
-                const isMentioned = user && (
-                  msg.mentions?.includes(user.username) || 
-                  msg.mentions?.includes('@all')
-                );
-                return (
-                <div
-                  key={msg.id}
-                  className={`flex gap-4 group ${darkMode ? 'hover:bg-white/5' : 'hover:bg-gray-100'} px-4 py-2 -mx-4 rounded-xl transition-all ${
-                    msg.username === user?.username ? 'bg-[#5865f2]/10' : ''
-                  } ${msg.type === 'break' ? 'bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-l-4 border-yellow-500 shadow-lg shadow-yellow-500/20' : ''} ${
-                    isMentioned ? 'bg-yellow-500/20 border-l-4 border-yellow-500' : ''
-                  }`}
-                >
-                  <div className="relative">
-                    <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-0 group-hover:opacity-30 transition-opacity"></div>
-                    <img
-                      src={msg.avatar}
-                      alt={msg.username}
-                      onClick={() => setSelectedUserProfile({ username: msg.username, avatar: msg.avatar })}
-                      className="w-11 h-11 rounded-full flex-shrink-0 cursor-pointer ring-2 ring-white/10 group-hover:ring-[#5865f2]/50 transition-all relative z-10"
-                    />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline gap-2.5 mb-1.5">
-                      <span className={`font-bold text-sm ${
-                        msg.username === user?.username 
-                          ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] bg-clip-text text-transparent' 
-                          : darkMode ? 'text-white' : 'text-gray-900'
-                      }`}>
-                        {msg.username === user?.username ? 'Sen' : msg.username}
-                      </span>
-                      <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
-                        {new Date(msg.timestamp).toLocaleTimeString('tr-TR', {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </span>
-                      {msg.edited && (
-                        <span className="text-xs text-gray-500 italic">(düzenlendi)</span>
-                      )}
-                      {msg.pinned && (
-                        <Pin size={12} className="text-yellow-400" />
-                      )}
-                    </div>
-                    {/* Reactions - shown above message content */}
-                    {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                      <div className="flex gap-1 flex-wrap mb-2">
-                        {Object.entries(msg.reactions).map(([emoji, users]) => {
-                          const userList = Array.isArray(users) ? users : [];
-                          const hasReacted = user && userList.includes(user.username);
-                          return (
-                            <button
-                              key={emoji}
-                              onClick={() => {
-                                if (user && selectedChannel) {
-                                  addReaction(selectedChannel, msg.id, emoji, user.username);
-                                }
+            ) : (
+              <div className="space-y-3">
+                {filteredMessages.map((msg) => {
+                  const isMentioned = user && (
+                    msg.mentions?.includes(user.username) ||
+                    msg.mentions?.includes('@all')
+                  );
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`flex gap-4 group ${darkMode ? 'hover:bg-white/5' : 'hover:bg-gray-100'} px-4 py-2 -mx-4 rounded-xl transition-all ${msg.username === user?.username ? 'bg-[#5865f2]/10' : ''
+                        } ${msg.type === 'break' ? 'bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-l-4 border-yellow-500 shadow-lg shadow-yellow-500/20' : ''} ${isMentioned ? 'bg-yellow-500/20 border-l-4 border-yellow-500' : ''
+                        }`}
+                    >
+                      <div className="relative">
+                        <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-0 group-hover:opacity-30 transition-opacity"></div>
+                        <img
+                          src={msg.avatar}
+                          alt={msg.username}
+                          onClick={() => setSelectedUserProfile({ username: msg.username, avatar: msg.avatar })}
+                          className="w-11 h-11 rounded-full flex-shrink-0 cursor-pointer ring-2 ring-white/10 group-hover:ring-[#5865f2]/50 transition-all relative z-10"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline gap-2.5 mb-1.5">
+                          <span className={`font-bold text-sm ${msg.username === user?.username
+                              ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] bg-clip-text text-transparent'
+                              : darkMode ? 'text-white' : 'text-gray-900'
+                            }`}>
+                            {msg.username === user?.username ? 'Sen' : msg.username}
+                          </span>
+                          <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
+                            {new Date(msg.timestamp).toLocaleTimeString('tr-TR', {
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                          {msg.edited && (
+                            <span className="text-xs text-gray-500 italic">(düzenlendi)</span>
+                          )}
+                          {msg.pinned && (
+                            <Pin size={12} className="text-yellow-400" />
+                          )}
+                        </div>
+                        {/* Reactions - shown above message content */}
+                        {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                          <div className="flex gap-1 flex-wrap mb-2">
+                            {Object.entries(msg.reactions).map(([emoji, users]) => {
+                              const userList = Array.isArray(users) ? users : [];
+                              const hasReacted = user && userList.includes(user.username);
+                              return (
+                                <button
+                                  key={emoji}
+                                  onClick={() => {
+                                    if (user && selectedChannel) {
+                                      addReaction(selectedChannel, msg.id, emoji, user.username);
+                                    }
+                                  }}
+                                  className={`px-2 py-1 rounded flex items-center gap-1 text-xs transition ${hasReacted
+                                      ? 'bg-[#5865f2]/30 hover:bg-[#5865f2]/40'
+                                      : darkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'
+                                    } ${darkMode ? 'text-white' : 'text-gray-700'}`}
+                                >
+                                  <span>{emoji}</span>
+                                  <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>{userList.length}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {msg.imageUrl && (
+                          <div className="mb-2">
+                            <img
+                              src={msg.imageUrl}
+                              alt="Uploaded"
+                              className="max-w-full md:max-w-md rounded-lg cursor-pointer hover:opacity-90 transition shadow-lg"
+                              onClick={() => window.open(msg.imageUrl, '_blank')}
+                              onError={(e) => {
+                                console.error('Image load error:', msg.imageUrl);
+                                (e.target as HTMLImageElement).style.display = 'none';
                               }}
-                              className={`px-2 py-1 rounded flex items-center gap-1 text-xs transition ${
-                                hasReacted 
-                                  ? 'bg-[#5865f2]/30 hover:bg-[#5865f2]/40' 
-                                  : darkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'
-                              } ${darkMode ? 'text-white' : 'text-gray-700'}`}
-                            >
-                              <span>{emoji}</span>
-                              <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>{userList.length}</span>
-                            </button>
-                          );
-                        })}
+                            />
+                          </div>
+                        )}
+                        {msg.gifUrl && (
+                          <div className="mb-2">
+                            <img
+                              src={msg.gifUrl}
+                              alt="GIF"
+                              className="max-w-full md:max-w-md rounded-lg cursor-pointer shadow-lg"
+                              onError={(e) => {
+                                console.error('GIF load error:', msg.gifUrl);
+                                (e.target as HTMLImageElement).style.display = 'none';
+                              }}
+                            />
+                          </div>
+                        )}
+                        {msg.text && (
+                          <div
+                            className={`${darkMode ? 'text-gray-300' : 'text-gray-700'} text-sm break-words message-content`}
+                            dangerouslySetInnerHTML={{ __html: sanitizeHTML(parseMentions(msg.text, [...uniqueUsers, ...(user ? [{ username: user.username, avatar: user.avatar }] : [])], user?.username).html) }}
+                            style={{
+                              lineHeight: '1.5'
+                            }}
+                          />
+                        )}
+                        <div className="flex items-center gap-2 mt-2">
+                          <button
+                            onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
+                            className={`px-2 py-1 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded text-xs transition opacity-0 group-hover:opacity-100`}
+                            title="Tepki Ekle"
+                          >
+                            <Smile size={14} />
+                          </button>
+                        </div>
                       </div>
-                    )}
-                    {msg.imageUrl && (
-                      <div className="mb-2">
-                        <img
-                          src={msg.imageUrl}
-                          alt="Uploaded"
-                          className="max-w-full md:max-w-md rounded-lg cursor-pointer hover:opacity-90 transition shadow-lg"
-                          onClick={() => window.open(msg.imageUrl, '_blank')}
-                          onError={(e) => {
-                            console.error('Image load error:', msg.imageUrl);
-                            (e.target as HTMLImageElement).style.display = 'none';
-                          }}
-                        />
-                      </div>
-                    )}
-                    {msg.gifUrl && (
-                      <div className="mb-2">
-                        <img
-                          src={msg.gifUrl}
-                          alt="GIF"
-                          className="max-w-full md:max-w-md rounded-lg cursor-pointer shadow-lg"
-                          onError={(e) => {
-                            console.error('GIF load error:', msg.gifUrl);
-                            (e.target as HTMLImageElement).style.display = 'none';
-                          }}
-                        />
-                      </div>
-                    )}
-                    {msg.text && (
-                      <div 
-                        className={`${darkMode ? 'text-gray-300' : 'text-gray-700'} text-sm break-words message-content`}
-                        dangerouslySetInnerHTML={{ __html: sanitizeHTML(parseMentions(msg.text, [...uniqueUsers, ...(user ? [{ username: user.username, avatar: user.avatar }] : [])], user?.username).html) }}
-                        style={{
-                          lineHeight: '1.5'
-                        }}
-                      />
-                    )}
-                    <div className="flex items-center gap-2 mt-2">
-                      <button
-                        onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
-                        className={`px-2 py-1 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded text-xs transition opacity-0 group-hover:opacity-100`}
-                        title="Tepki Ekle"
-                      >
-                        <Smile size={14} />
-                      </button>
                     </div>
-                  </div>
-                </div>
-                );
-              })}
-              <div ref={messagesEndRef} />
-            </div>
-          )}
+                  );
+                })}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
 
-          {/* Typing Indicator */}
-          {typingUsers.size > 0 && (
-            <div className="px-4 py-2 text-sm text-gray-400 italic">
-              {Array.from(typingUsers).join(', ')} yazıyor...
-            </div>
-          )}
+            {/* Typing Indicator */}
+            {typingUsers.size > 0 && (
+              <div className="px-4 py-2 text-sm text-gray-400 italic">
+                {Array.from(typingUsers).join(', ')} yazıyor...
+              </div>
+            )}
           </div>
         )}
 
@@ -2226,7 +2345,7 @@ const App: React.FC = () => {
                   className="px-3 py-2 text-xs font-bold rounded-lg transition disabled:opacity-50 relative overflow-hidden group border border-white/10 hover:border-white/20"
                   title="GIF Gönder"
                 >
-                  <span 
+                  <span
                     className="relative z-10 bg-gradient-to-r from-pink-500 via-purple-500 via-blue-500 to-green-500 bg-clip-text text-transparent"
                     style={{
                       backgroundSize: '200% 200%',
@@ -2252,7 +2371,7 @@ const App: React.FC = () => {
                     <div className="absolute bottom-full left-0 mb-2 w-48 bg-[#2f3136] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden">
                       {breakTypes.map((breakType) => {
                         const IconComponent = breakType.icon;
-                 return (
+                        return (
                           <button
                             key={breakType.id}
                             onClick={() => handleBreak(breakType)}
@@ -2297,7 +2416,7 @@ const App: React.FC = () => {
                     const cursorPos = e.target.selectionStart || 0;
                     const textBeforeCursor = value.substring(0, cursorPos);
                     const lastAtIndex = textBeforeCursor.lastIndexOf('@');
-                    
+
                     if (lastAtIndex !== -1) {
                       const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
                       if (!textAfterAt.includes(' ') && !textAfterAt.includes('\n')) {
@@ -2370,10 +2489,10 @@ const App: React.FC = () => {
                             <div className="font-semibold">{u.username}</div>
                           </div>
                         </button>
-                                ))}
-                            </div>
+                      ))}
+                  </div>
                 )}
-                        </div>
+              </div>
               <button
                 onClick={handleSendMessage}
                 disabled={!inputMessage.trim() || isLoading}
@@ -2385,31 +2504,31 @@ const App: React.FC = () => {
                   <Send size={18} />
                 )}
               </button>
-                             </div>
-                        </div>
-                 )}
-                             </div>
-                             
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Notification Toast */}
       {notification && (
         <div className="fixed top-4 right-4 modern-card border border-white/10 rounded-lg shadow-2xl p-4 max-w-sm z-50 animate-slideIn">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#5865f2] to-[#eb459e] flex items-center justify-center flex-shrink-0">
               <MessageSquare size={20} className="text-white" />
-                             </div>
+            </div>
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-white mb-1">Yeni Mesaj</div>
               <div className="text-sm text-gray-400 mb-1">{notification.username}</div>
               <div className="text-sm text-gray-300 truncate">{notification.text}</div>
-                        </div>
+            </div>
             <button
               onClick={() => setNotification(null)}
               className="text-gray-400 hover:text-white transition"
             >
               <X size={18} />
             </button>
-                        </div>
-                    </div>
+          </div>
+        </div>
       )}
 
       {/* Emoji Picker */}
@@ -2512,8 +2631,8 @@ const App: React.FC = () => {
                   {emoji}
                 </button>
               ))}
-                        </div>
-                        </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2542,7 +2661,7 @@ const App: React.FC = () => {
                   >
                     <ImageIcon size={14} className="text-white" />
                   </button>
-             </div>
+                </div>
                 <input
                   ref={avatarInputRef}
                   type="file"
@@ -2609,7 +2728,7 @@ const App: React.FC = () => {
                   alt={selectedUserProfile.username}
                   className="w-24 h-24 rounded-full border-4 border-[#2f3136]"
                 />
-      </div>
+              </div>
             </div>
             <div className="pt-16 pb-6 px-6 text-center">
               <h2 className="text-2xl font-bold text-white mb-2">{selectedUserProfile.username}</h2>
