@@ -297,17 +297,34 @@ export const addWhiteboardStroke = async (channelId: string, stroke: {
   return await addDoc(strokesRef, stroke);
 };
 
-export const subscribeToWhiteboard = (channelId: string, callback: (strokes: any[]) => void) => {
+export const subscribeToWhiteboard = (channelId: string, callback: (strokes: any[]) => void, viewport?: { minX: number; maxX: number; minY: number; maxY: number }) => {
   if (!channelId) return () => {};
   const strokesRef = whiteboardStrokesCollection(channelId);
-  const q = query(strokesRef, orderBy('timestamp', 'asc'));
+  
+  // If viewport is provided, we'll filter client-side (Firestore doesn't support spatial queries easily)
+  // For now, load all strokes but we'll optimize rendering
+  const q = query(strokesRef, orderBy('timestamp', 'desc'), limit(500)); // Limit to recent 500 strokes
   
   return onSnapshot(q, (snapshot) => {
     const strokes = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
-    }));
-    callback(strokes);
+    })).reverse();
+    
+    // Filter by viewport if provided
+    if (viewport) {
+      const filtered = strokes.filter((stroke: any) => {
+        if (!stroke.points || stroke.points.length === 0) return false;
+        // Check if any point is in viewport
+        return stroke.points.some((p: { x: number; y: number }) => 
+          p.x >= viewport.minX && p.x <= viewport.maxX && 
+          p.y >= viewport.minY && p.y <= viewport.maxY
+        );
+      });
+      callback(filtered);
+    } else {
+      callback(strokes);
+    }
   });
 };
 

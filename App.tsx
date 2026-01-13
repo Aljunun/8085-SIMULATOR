@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip, Cigarette, BookOpen, FileText, Plus, Volume2, Settings, Search, Pin, Edit2, Heart, ThumbsUp, Laugh, Star, Moon, Sun, Bell, BellOff, Users, Crown, PenTool, Eraser, Palette, Minus, Maximize, Mail, Lock, Coffee, ChevronDown } from 'lucide-react';
 import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels, addWhiteboardStroke, subscribeToWhiteboard, clearWhiteboard, signUp, signIn, logOut, onAuthChange, getUserProfile, updateUserProfile, addReaction, addPdfStroke, subscribeToPdfDrawings, db, loadMoreMessages } from './services/firebase';
 import { collection, getDocs, writeBatch } from 'firebase/firestore';
@@ -131,10 +131,46 @@ const Whiteboard: React.FC<{
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
+  const [visibleStrokes, setVisibleStrokes] = useState<WhiteboardStroke[]>([]);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
   const currentStrokeRef = useRef<Array<{ x: number; y: number }>>([]);
 
   const colors = ['#ffffff', '#000000', '#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
+
+  // Calculate viewport and filter visible strokes
+  useEffect(() => {
+    if (!containerRef.current || strokes.length === 0) {
+      setVisibleStrokes(strokes);
+      return;
+    }
+
+    const container = containerRef.current;
+    const rect = container.getBoundingClientRect();
+    
+    // Calculate viewport in world coordinates
+    const viewport = {
+      minX: -offset.x / scale,
+      maxX: (-offset.x + rect.width) / scale,
+      minY: -offset.y / scale,
+      maxY: (-offset.y + rect.height) / scale
+    };
+
+    // Filter strokes that are visible in viewport (with some padding)
+    const padding = 200; // Extra padding to load strokes near viewport
+    const filtered = strokes.filter((stroke) => {
+      if (!stroke.points || stroke.points.length === 0) return false;
+      
+      // Check if stroke intersects with viewport
+      return stroke.points.some((p) => 
+        p.x >= viewport.minX - padding && 
+        p.x <= viewport.maxX + padding && 
+        p.y >= viewport.minY - padding && 
+        p.y <= viewport.maxY + padding
+      );
+    });
+
+    setVisibleStrokes(filtered);
+  }, [strokes, offset, scale]);
 
   // Draw all strokes on canvas
   useEffect(() => {
@@ -165,8 +201,8 @@ const Whiteboard: React.FC<{
       ctx.fillStyle = '#1a1c1f';
       ctx.fillRect(0, 0, rect.width, rect.height);
 
-      // Draw all strokes (world coordinates)
-      strokes.forEach((stroke) => {
+      // Draw only visible strokes (world coordinates)
+      visibleStrokes.forEach((stroke) => {
         if (stroke.points.length < 2) return;
 
         ctx.beginPath();
@@ -191,7 +227,7 @@ const Whiteboard: React.FC<{
 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [strokes]);
+  }, [visibleStrokes]);
 
   const getPointFromEvent = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -411,7 +447,7 @@ const Whiteboard: React.FC<{
       {/* Canvas */}
       <div ref={containerRef} className="flex-1 relative overflow-hidden bg-[#1a1c1f]" style={{ cursor: isPanning ? 'grabbing' : 'grab' }}>
         <div 
-          style={{
+      style={{ 
             transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
             transformOrigin: '0 0',
             width: '10000px',
@@ -423,7 +459,7 @@ const Whiteboard: React.FC<{
         >
           <canvas
             ref={canvasRef}
-            onMouseDown={handleMouseDown}
+        onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
@@ -1609,12 +1645,17 @@ const App: React.FC = () => {
   ).filter((u) => (u as { username: string; avatar: string }).username !== user?.username) as Array<{ username: string; avatar: string }>;
 
   // Filter messages by search
-  const filteredMessages = searchQuery.trim()
-    ? messages.filter(msg => 
-        msg.text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        msg.username.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : messages;
+  const filteredMessages = useMemo(() => {
+    if (!searchQuery.trim()) return messages;
+    const searchLower = searchQuery.toLowerCase();
+    return messages.filter((msg) => {
+      return (
+        msg.text?.toLowerCase().includes(searchLower) ||
+        msg.username.toLowerCase().includes(searchLower) ||
+        msg.type === 'break'
+      );
+    });
+  }, [messages, searchQuery]);
 
   // If user not logged in, show inline login
   if (!user) {
@@ -1907,12 +1948,12 @@ const App: React.FC = () => {
                   <BookOpen size={16} className={selectedCourse === course.id ? 'text-white' : 'text-gray-400'} />
                   <span className={`text-sm truncate font-medium ${selectedCourse === course.id ? 'text-white' : 'text-gray-300'}`}>
                     {course.name}
-                  </span>
-                </div>
+                        </span>
+                    </div>
               ))}
-            </div>
                     </div>
                 </div>
+            </div>
 
         {/* User Footer */}
         <div className={`h-16 bg-gradient-to-t ${darkMode ? 'from-black/40' : 'from-gray-100/40'} to-transparent border-t ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between px-2 md:px-3 flex-shrink-0 backdrop-blur-sm`}>
@@ -1989,7 +2030,7 @@ const App: React.FC = () => {
               <FileText size={16} />
               PDF/Dosya Yükle
             </button>
-            <input
+                        <input 
               ref={courseFileInputRef}
               type="file"
               accept=".pdf,.doc,.docx,.txt"
@@ -2012,7 +2053,7 @@ const App: React.FC = () => {
                       <div className={`text-sm ${darkMode ? 'text-white' : 'text-gray-800'} truncate font-medium`}>{file.name}</div>
                       <div className="text-xs text-gray-400">{file.uploadedBy}</div>
                     </div>
-                  </div>
+                </div>
                 </div>
               ))}
                             </div>
@@ -2029,7 +2070,7 @@ const App: React.FC = () => {
             className="text-gray-400 hover:text-white transition-all hover:scale-110"
           >
             <Hash size={20} />
-          </button>
+                    </button>
           <span className="font-bold text-white tracking-wide">
             {channels.find(c => c.id === selectedChannel)?.name || 'Kanal Seç'}
           </span>
@@ -2039,17 +2080,17 @@ const App: React.FC = () => {
               className="text-gray-400 hover:text-white transition-all"
             >
               <Search size={20} />
-            </button>
+                    </button>
             {selectedCourse && (
               <button
                 onClick={() => setSelectedCourse(null)}
                 className="text-gray-400 hover:text-white transition-all"
               >
                 <X size={20} />
-              </button>
+                    </button>
             )}
-          </div>
-                             </div>
+                </div>
+            </div>
                              
         {/* Channel Header */}
         {selectedChannel && (
@@ -2145,36 +2186,40 @@ const App: React.FC = () => {
           ) : (
             <div 
               ref={messagesContainerRef}
-              className="space-y-3 overflow-y-auto flex-1"
-              onScroll={async (e) => {
+              className="space-y-3 overflow-y-auto overflow-x-hidden flex-1"
+              onScroll={useCallback((e: React.UIEvent<HTMLDivElement>) => {
                 const container = e.currentTarget;
-                // Load more when scrolled to top
+                // Load more when scrolled to top (throttled)
                 if (container.scrollTop < 100 && hasMoreMessages && !isLoadingMoreMessages && selectedChannel) {
                   setIsLoadingMoreMessages(true);
-                  try {
-                    const oldestMessage = messages[0];
-                    if (oldestMessage) {
-                      const moreMessages = await loadMoreMessages(selectedChannel, oldestMessage.timestamp, 50);
-                      if (moreMessages.length > 0) {
-                        const currentScrollHeight = container.scrollHeight;
-                        setMessages(prev => [...moreMessages, ...prev]);
-                        setHasMoreMessages(moreMessages.length >= 50);
-                        // Maintain scroll position
-                        setTimeout(() => {
-                          const newScrollHeight = container.scrollHeight;
-                          container.scrollTop = newScrollHeight - currentScrollHeight;
-                        }, 0);
-                      } else {
-                        setHasMoreMessages(false);
-                      }
-                    }
-                  } catch (error) {
-                    console.error('Error loading more messages:', error);
-                  } finally {
+                  const oldestMessage = messages[0];
+                  if (oldestMessage) {
+                    loadMoreMessages(selectedChannel, oldestMessage.timestamp, 50)
+                      .then((moreMessages) => {
+                        if (moreMessages.length > 0) {
+                          const currentScrollHeight = container.scrollHeight;
+                          setMessages(prev => [...moreMessages, ...prev]);
+                          setHasMoreMessages(moreMessages.length >= 30);
+                          // Maintain scroll position
+                          requestAnimationFrame(() => {
+                            const newScrollHeight = container.scrollHeight;
+                            container.scrollTop = newScrollHeight - currentScrollHeight;
+                          });
+                        } else {
+                          setHasMoreMessages(false);
+                        }
+                      })
+                      .catch((error) => {
+                        console.error('Error loading more messages:', error);
+                      })
+                      .finally(() => {
+                        setIsLoadingMoreMessages(false);
+                      });
+                  } else {
                     setIsLoadingMoreMessages(false);
                   }
                 }
-              }}
+              }, [hasMoreMessages, isLoadingMoreMessages, selectedChannel, messages])}
             >
               {isLoadingMoreMessages && (
                 <div className="text-center py-2 text-gray-400 text-sm">
@@ -2258,10 +2303,10 @@ const App: React.FC = () => {
                         <img
                           src={msg.imageUrl}
                           alt="Uploaded"
+                          loading="lazy"
                           className="max-w-full md:max-w-md rounded-lg cursor-pointer hover:opacity-90 transition shadow-lg"
                           onClick={() => window.open(msg.imageUrl, '_blank')}
                           onError={(e) => {
-                            console.error('Image load error:', msg.imageUrl);
                             (e.target as HTMLImageElement).style.display = 'none';
                           }}
                         />
@@ -2272,9 +2317,9 @@ const App: React.FC = () => {
                         <img
                           src={msg.gifUrl}
                           alt="GIF"
+                          loading="lazy"
                           className="max-w-full md:max-w-md rounded-lg cursor-pointer shadow-lg"
                           onError={(e) => {
-                            console.error('GIF load error:', msg.gifUrl);
                             (e.target as HTMLImageElement).style.display = 'none';
                           }}
                         />
@@ -2360,7 +2405,7 @@ const App: React.FC = () => {
                     <div className="absolute bottom-full left-0 mb-2 w-48 bg-[#2f3136] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden">
                       {breakTypes.map((breakType) => {
                         const IconComponent = breakType.icon;
-                        return (
+                 return (
                           <button
                             key={breakType.id}
                             onClick={() => handleBreak(breakType)}
@@ -2478,10 +2523,10 @@ const App: React.FC = () => {
                             <div className="font-semibold">{u.username}</div>
                           </div>
                         </button>
-                      ))}
-                  </div>
+                                ))}
+                            </div>
                 )}
-              </div>
+                        </div>
               <button
                 onClick={handleSendMessage}
                 disabled={!inputMessage.trim() || isLoading}
@@ -2493,31 +2538,31 @@ const App: React.FC = () => {
                   <Send size={18} />
                 )}
               </button>
-                        </div>
+                             </div>
                         </div>
                  )}
-             </div>
-
+                             </div>
+                             
       {/* Notification Toast */}
       {notification && (
         <div className="fixed top-4 right-4 modern-card border border-white/10 rounded-lg shadow-2xl p-4 max-w-sm z-50 animate-slideIn">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#5865f2] to-[#eb459e] flex items-center justify-center flex-shrink-0">
               <MessageSquare size={20} className="text-white" />
-      </div>
+                             </div>
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-white mb-1">Yeni Mesaj</div>
               <div className="text-sm text-gray-400 mb-1">{notification.username}</div>
               <div className="text-sm text-gray-300 truncate">{notification.text}</div>
-            </div>
+                        </div>
             <button
               onClick={() => setNotification(null)}
               className="text-gray-400 hover:text-white transition"
             >
               <X size={18} />
             </button>
-          </div>
-        </div>
+                        </div>
+                    </div>
       )}
 
       {/* Emoji Picker */}
@@ -2620,8 +2665,8 @@ const App: React.FC = () => {
                   {emoji}
                 </button>
               ))}
-            </div>
-          </div>
+                        </div>
+                        </div>
         </div>
       )}
 
@@ -2650,7 +2695,7 @@ const App: React.FC = () => {
                   >
                     <ImageIcon size={14} className="text-white" />
                   </button>
-                </div>
+             </div>
                 <input
                   ref={avatarInputRef}
                   type="file"
@@ -2717,7 +2762,7 @@ const App: React.FC = () => {
                   alt={selectedUserProfile.username}
                   className="w-24 h-24 rounded-full border-4 border-[#2f3136]"
                 />
-              </div>
+      </div>
             </div>
             <div className="pt-16 pb-6 px-6 text-center">
               <h2 className="text-2xl font-bold text-white mb-2">{selectedUserProfile.username}</h2>
