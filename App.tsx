@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip } from 'lucide-react';
-import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage } from './services/firebase';
+import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip, Cigarette, BookOpen, FileText, Plus } from 'lucide-react';
+import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles } from './services/firebase';
 
 interface Message {
   id: string;
@@ -10,7 +10,7 @@ interface Message {
   imageUrl?: string;
   gifUrl?: string;
   timestamp: number;
-  type: 'text' | 'image' | 'gif';
+  type: 'text' | 'image' | 'gif' | 'break';
 }
 
 interface UserData {
@@ -19,7 +19,47 @@ interface UserData {
   userId?: string;
 }
 
-// Notification sound (using Web Audio API)
+interface Course {
+  id: string;
+  name: string;
+  description?: string;
+  createdBy: string;
+  createdAt: number;
+}
+
+interface CourseFile {
+  id: string;
+  name: string;
+  url: string;
+  type: string;
+  uploadedBy: string;
+  uploadedAt: number;
+}
+
+// Break sound (1 second)
+const playBreakSound = () => {
+  try {
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    oscillator.frequency.value = 600;
+    oscillator.type = 'sine';
+
+    gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 1.0);
+
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 1.0);
+  } catch (e) {
+    console.log('Audio notification failed:', e);
+  }
+};
+
+// Notification sound
 const playNotificationSound = () => {
   try {
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -42,7 +82,7 @@ const playNotificationSound = () => {
   }
 };
 
-// GIPHY API Key (public beta key - replace with your own)
+// GIPHY API Key
 const GIPHY_API_KEY = 'GlVGYHkr3WSBnllca54iNt0yFbjz7L65';
 
 // GIPHY Search Component
@@ -143,117 +183,46 @@ const GiphyPicker: React.FC<{
   );
 };
 
-// Login Modal Component
-const LoginModal: React.FC<{
-  isOpen: boolean;
-  onClose: () => void;
-  onLogin: (username: string, avatar: string) => void;
-}> = ({ isOpen, onClose, onLogin }) => {
-  const [username, setUsername] = useState('');
-  const [avatar, setAvatar] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = reader.result as string;
-        setAvatar(base64String);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleSubmit = () => {
-    if (username.trim()) {
-      onLogin(username.trim(), avatar);
-      setUsername('');
-      setAvatar('');
-      onClose();
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-[#36393f]/95 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[#36393f] rounded-lg shadow-2xl w-full max-w-md border border-[#202225]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-6 border-b border-[#202225]">
-          <h2 className="text-xl font-bold text-white">Kutuphane Chat'e Hoş Geldiniz</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition">
-            <X size={24} />
-          </button>
-        </div>
-        
-        <div className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-semibold text-gray-300 mb-2">
-              Kullanıcı Adı
-            </label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSubmit()}
-              placeholder="Kullanıcı adınızı girin"
-              className="w-full px-4 py-3 bg-[#202225] border border-[#202225] rounded text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] transition"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-300 mb-2">
-              Profil Fotoğrafı (Opsiyonel)
-            </label>
-            <div className="flex items-center gap-4">
-              {avatar && (
-                <img
-                  src={avatar}
-                  alt="Avatar"
-                  className="w-16 h-16 rounded-full object-cover"
-                />
-              )}
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="px-4 py-2 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded transition"
-              >
-                <ImageIcon size={20} className="inline mr-2" />
-                Fotoğraf Seç
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleAvatarChange}
-                className="hidden"
-              />
-            </div>
-          </div>
-
-          <button
-            onClick={handleSubmit}
-            disabled={!username.trim()}
-            className="w-full bg-[#5865f2] hover:bg-[#4752c4] text-white py-3 rounded font-semibold disabled:bg-gray-600 disabled:cursor-not-allowed transition"
-          >
-            Giriş Yap
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const App: React.FC = () => {
   const [user, setUser] = useState<UserData | null>(null);
+  const [username, setUsername] = useState('');
+  const [avatar, setAvatar] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showLoginModal, setShowLoginModal] = useState(false);
   const [showGiphyPicker, setShowGiphyPicker] = useState(false);
   const [notification, setNotification] = useState<{ username: string; text: string } | null>(null);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [selectedCourse, setSelectedCourse] = useState<string | null>(null);
+  const [courseFiles, setCourseFiles] = useState<CourseFile[]>([]);
+  const [newCourseName, setNewCourseName] = useState('');
+  const [showNewCourseInput, setShowNewCourseInput] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const courseFileInputRef = useRef<HTMLInputElement>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
   const prevMessagesLengthRef = useRef(0);
+
+  // Subscribe to courses
+  useEffect(() => {
+    const unsubscribe = subscribeToCourses((firebaseCourses) => {
+      setCourses(firebaseCourses);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Subscribe to course files
+  useEffect(() => {
+    if (!selectedCourse) {
+      setCourseFiles([]);
+      return;
+    }
+    const unsubscribe = subscribeToCourseFiles(selectedCourse, (files) => {
+      setCourseFiles(files);
+    });
+    return () => unsubscribe();
+  }, [selectedCourse]);
 
   // Subscribe to Firebase messages
   useEffect(() => {
@@ -268,23 +237,27 @@ const App: React.FC = () => {
         const lastMessage = firebaseMessages[firebaseMessages.length - 1];
         if (lastMessage.username !== user.username) {
           // Play sound
-          playNotificationSound();
+          if (lastMessage.type === 'break') {
+            playBreakSound();
+          } else {
+            playNotificationSound();
+          }
           
           // Show notification
-          const messageText = lastMessage.text || lastMessage.imageUrl ? '📷 Fotoğraf' : lastMessage.gifUrl ? '🎬 GIF' : '';
+          const messageText = lastMessage.type === 'break' 
+            ? '🚬 Sigara içme molası!' 
+            : lastMessage.text || lastMessage.imageUrl ? '📷 Fotoğraf' : lastMessage.gifUrl ? '🎬 GIF' : '';
           setNotification({
             username: lastMessage.username,
             text: messageText || lastMessage.text || ''
           });
           
-          // Auto hide notification after 5 seconds
           setTimeout(() => {
             setNotification(null);
           }, 5000);
           
-          // Browser notification
           if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification(`Yeni mesaj: ${lastMessage.username}`, {
+            new Notification(lastMessage.type === 'break' ? '🚬 Sigara içme molası!' : `Yeni mesaj: ${lastMessage.username}`, {
               body: messageText || lastMessage.text || '',
               icon: lastMessage.avatar
             });
@@ -295,9 +268,7 @@ const App: React.FC = () => {
       prevMessagesLengthRef.current = firebaseMessages.length;
     });
 
-    return () => {
-      // Cleanup
-    };
+    return () => unsubscribe();
   }, [user]);
 
   // Request notification permission
@@ -312,23 +283,47 @@ const App: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Check if user needs to login
-  useEffect(() => {
-    if (!user) {
-      setShowLoginModal(true);
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        setAvatar(base64String);
+      };
+      reader.readAsDataURL(file);
     }
-  }, [user]);
+  };
 
-  const handleLogin = (username: string, avatar: string) => {
-    const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const userData: UserData = {
-      username: username,
-      avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(username)}&background=5865f2&color=fff&size=128`,
-      userId: userId
-    };
-    setUser(userData);
-    saveUser(userId, { username: userData.username, avatar: userData.avatar });
-    setShowLoginModal(false);
+  const handleLogin = () => {
+    if (username.trim()) {
+      const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const userData: UserData = {
+        username: username.trim(),
+        avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(username.trim())}&background=5865f2&color=fff&size=128`,
+        userId: userId
+      };
+      setUser(userData);
+      saveUser(userId, { username: userData.username, avatar: userData.avatar });
+      setUsername('');
+      setAvatar('');
+    }
+  };
+
+  const handleBreak = async () => {
+    if (!user) return;
+    try {
+      await sendMessage({
+        username: user.username,
+        avatar: user.avatar,
+        text: '🚬 Sigara içme molası!',
+        timestamp: Date.now(),
+        type: 'break'
+      });
+      playBreakSound();
+    } catch (error) {
+      console.error('Error sending break message:', error);
+    }
   };
 
   const handleImageUpload = async (file: File) => {
@@ -391,6 +386,40 @@ const App: React.FC = () => {
     }
   };
 
+  const handleCreateCourse = async () => {
+    if (!newCourseName.trim() || !user) return;
+    try {
+      await createCourse({
+        name: newCourseName.trim(),
+        createdBy: user.username
+      });
+      setNewCourseName('');
+      setShowNewCourseInput(false);
+    } catch (error) {
+      console.error('Error creating course:', error);
+      alert('Ders oluşturulurken bir hata oluştu.');
+    }
+  };
+
+  const handleCourseFileUpload = async (file: File) => {
+    if (!selectedCourse || !user) return;
+    setIsLoading(true);
+    try {
+      const fileUrl = await uploadFile(file, `courses/${selectedCourse}`);
+      await addFileToCourse(selectedCourse, {
+        name: file.name,
+        url: fileUrl,
+        type: file.type,
+        uploadedBy: user.username
+      });
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      alert('Dosya yüklenirken bir hata oluştu.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleClearChat = async () => {
     if (confirm('Tüm sohbet geçmişini silmek istediğinize emin misiniz?')) {
       try {
@@ -405,20 +434,77 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     setUser(null);
-    setShowLoginModal(true);
+    setUsername('');
+    setAvatar('');
   };
 
-  // Get unique users from messages (excluding current user from list, show separately)
+  // Get unique users from messages
   const uniqueUsers = Array.from(
     new Map(messages.map(msg => [msg.username, { username: msg.username, avatar: msg.avatar }])).values()
   ).filter(u => u.username !== user?.username);
 
+  // If user not logged in, show inline login
+  if (!user) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-[#36393f] p-4">
+        <div className="w-full max-w-md bg-[#2f3136] rounded-lg p-6 border border-[#202225]">
+          <h2 className="text-2xl font-bold text-white mb-6 text-center">Kutuphane Chat</h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-300 mb-2">
+                Kullanıcı Adı
+              </label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                placeholder="Kullanıcı adınızı girin"
+                className="w-full px-4 py-3 bg-[#202225] border border-[#202225] rounded text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] transition"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-300 mb-2">
+                Profil Fotoğrafı (Opsiyonel)
+              </label>
+              <div className="flex items-center gap-4">
+                {avatar && (
+                  <img src={avatar} alt="Avatar" className="w-16 h-16 rounded-full object-cover" />
+                )}
+                <button
+                  onClick={() => avatarInputRef.current?.click()}
+                  className="px-4 py-2 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded transition"
+                >
+                  <ImageIcon size={20} className="inline mr-2" />
+                  Fotoğraf Seç
+                </button>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleAvatarChange}
+                  className="hidden"
+                />
+              </div>
+            </div>
+            <button
+              onClick={handleLogin}
+              disabled={!username.trim()}
+              className="w-full bg-[#5865f2] hover:bg-[#4752c4] text-white py-3 rounded font-semibold disabled:bg-gray-600 disabled:cursor-not-allowed transition"
+            >
+              Giriş Yap
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen flex bg-[#36393f] text-white overflow-hidden">
-      {/* Left Sidebar - Discord style */}
-      <div className="w-60 bg-[#2f3136] flex flex-col">
-        {/* Server/Channel Header */}
-        <div className="h-12 border-b border-[#202225] flex items-center px-4 bg-[#2f3136]">
+      {/* Left Sidebar */}
+      <div className={`${sidebarOpen ? 'w-60' : 'w-0'} bg-[#2f3136] flex flex-col transition-all duration-300 overflow-hidden md:flex`}>
+        <div className="h-12 border-b border-[#202225] flex items-center px-4 bg-[#2f3136] flex-shrink-0">
           <div className="flex items-center gap-2">
             <Hash size={20} className="text-gray-400" />
             <span className="font-semibold text-white">Kutuphane Chat</span>
@@ -426,9 +512,9 @@ const App: React.FC = () => {
         </div>
 
         {/* Users List */}
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="flex-1 overflow-y-auto p-2 min-h-0">
           <div className="px-2 py-1 text-xs font-semibold text-gray-400 uppercase mb-2">
-            Online — {uniqueUsers.length + (user ? 1 : 0)}
+            Online — {uniqueUsers.length + 1}
           </div>
           <div className="space-y-1">
             {uniqueUsers.map((u, idx) => (
@@ -437,69 +523,172 @@ const App: React.FC = () => {
                 className="flex items-center gap-3 px-2 py-1.5 rounded hover:bg-[#393c43] cursor-pointer transition group"
               >
                 <div className="relative">
-                  <img
-                    src={u.avatar}
-                    alt={u.username}
-                    className="w-8 h-8 rounded-full"
-                  />
+                  <img src={u.avatar} alt={u.username} className="w-8 h-8 rounded-full" />
                   <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-[#2f3136]"></div>
                 </div>
-                <span className="text-sm text-gray-300 group-hover:text-white transition">
+                <span className="text-sm text-gray-300 group-hover:text-white transition truncate">
                   {u.username}
                 </span>
               </div>
             ))}
-            {user && (
-              <div className="flex items-center gap-3 px-2 py-1.5 rounded bg-[#393c43] mt-2">
-                <div className="relative">
-                  <img
-                    src={user.avatar}
-                    alt={user.username}
-                    className="w-8 h-8 rounded-full"
-                  />
-                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-[#2f3136]"></div>
-                </div>
-                <span className="text-sm text-white font-medium">{user.username}</span>
+            <div className="flex items-center gap-3 px-2 py-1.5 rounded bg-[#393c43] mt-2">
+              <div className="relative">
+                <img src={user.avatar} alt={user.username} className="w-8 h-8 rounded-full" />
+                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-[#2f3136]"></div>
               </div>
-            )}
+              <span className="text-sm text-white font-medium truncate">{user.username}</span>
+            </div>
           </div>
         </div>
 
-        {/* User Info Footer */}
-        {user && (
-          <div className="h-14 bg-[#292b2f] border-t border-[#202225] flex items-center justify-between px-2">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <img
-                src={user.avatar}
-                alt={user.username}
-                className="w-8 h-8 rounded-full flex-shrink-0"
-              />
-              <span className="text-sm font-medium text-white truncate">{user.username}</span>
-            </div>
-            <div className="flex gap-1">
-              <button
-                onClick={handleClearChat}
-                className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-[#393c43] rounded transition"
-                title="Sohbeti Temizle"
-              >
-                <Trash2 size={18} />
-              </button>
-              <button
-                onClick={handleLogout}
-                className="p-1.5 text-gray-400 hover:text-white hover:bg-[#393c43] rounded transition"
-                title="Çıkış"
-              >
-                <LogOut size={18} />
-              </button>
-            </div>
+        {/* Courses Section */}
+        <div className="border-t border-[#202225] p-2 flex-shrink-0">
+          <div className="flex items-center justify-between mb-2">
+            <div className="px-2 py-1 text-xs font-semibold text-gray-400 uppercase">Dersler</div>
+            <button
+              onClick={() => setShowNewCourseInput(!showNewCourseInput)}
+              className="p-1 text-gray-400 hover:text-white hover:bg-[#393c43] rounded transition"
+            >
+              <Plus size={16} />
+            </button>
           </div>
-        )}
+          {showNewCourseInput && (
+            <div className="mb-2 flex gap-1">
+              <input
+                type="text"
+                value={newCourseName}
+                onChange={(e) => setNewCourseName(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleCreateCourse()}
+                placeholder="Ders adı"
+                className="flex-1 px-2 py-1 text-sm bg-[#202225] border border-[#202225] rounded text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] transition"
+              />
+              <button
+                onClick={handleCreateCourse}
+                className="px-2 py-1 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded text-sm transition"
+              >
+                Ekle
+              </button>
+            </div>
+          )}
+          <div className="space-y-1 max-h-32 overflow-y-auto">
+            {courses.map((course) => (
+              <div
+                key={course.id}
+                onClick={() => setSelectedCourse(course.id)}
+                className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition ${
+                  selectedCourse === course.id ? 'bg-[#5865f2]' : 'hover:bg-[#393c43]'
+                }`}
+              >
+                <BookOpen size={16} className="text-gray-400" />
+                <span className="text-sm text-gray-300 truncate">{course.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* User Footer */}
+        <div className="h-14 bg-[#292b2f] border-t border-[#202225] flex items-center justify-between px-2 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <img src={user.avatar} alt={user.username} className="w-8 h-8 rounded-full flex-shrink-0" />
+            <span className="text-sm font-medium text-white truncate">{user.username}</span>
+          </div>
+          <div className="flex gap-1">
+            <button
+              onClick={handleClearChat}
+              className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-[#393c43] rounded transition"
+              title="Sohbeti Temizle"
+            >
+              <Trash2 size={18} />
+            </button>
+            <button
+              onClick={handleLogout}
+              className="p-1.5 text-gray-400 hover:text-white hover:bg-[#393c43] rounded transition"
+              title="Çıkış"
+            >
+              <LogOut size={18} />
+            </button>
+          </div>
+        </div>
       </div>
 
+      {/* Right Sidebar - Courses & Files */}
+      {selectedCourse && (
+        <div className="w-64 bg-[#2f3136] border-l border-[#202225] flex flex-col md:flex">
+          <div className="h-12 border-b border-[#202225] flex items-center justify-between px-4 flex-shrink-0">
+            <span className="font-semibold text-white text-sm truncate">
+              {courses.find(c => c.id === selectedCourse)?.name}
+            </span>
+            <button
+              onClick={() => setSelectedCourse(null)}
+              className="text-gray-400 hover:text-white transition md:hidden"
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            <button
+              onClick={() => courseFileInputRef.current?.click()}
+              className="w-full mb-4 px-4 py-2 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded text-sm font-medium transition flex items-center justify-center gap-2"
+            >
+              <FileText size={16} />
+              PDF/Dosya Yükle
+            </button>
+            <input
+              ref={courseFileInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx,.txt"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleCourseFileUpload(file);
+              }}
+              className="hidden"
+            />
+            <div className="space-y-2">
+              {courseFiles.map((file) => (
+                <a
+                  key={file.id}
+                  href={file.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block p-3 bg-[#202225] rounded hover:bg-[#393c43] transition"
+                >
+                  <div className="flex items-center gap-2">
+                    <FileText size={16} className="text-gray-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-white truncate">{file.name}</div>
+                      <div className="text-xs text-gray-400">{file.uploadedBy}</div>
+                    </div>
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col bg-[#36393f]">
+      <div className="flex-1 flex flex-col bg-[#36393f] min-w-0">
+        {/* Mobile Header */}
+        <div className="h-12 border-b border-[#202225] flex items-center justify-between px-4 bg-[#36393f] md:hidden flex-shrink-0">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="text-gray-400 hover:text-white"
+          >
+            <Hash size={20} />
+          </button>
+          <span className="font-semibold text-white">Kutuphane Chat</span>
+          {selectedCourse && (
+            <button
+              onClick={() => setSelectedCourse(null)}
+              className="text-gray-400 hover:text-white"
+            >
+              <X size={20} />
+            </button>
+          )}
+        </div>
+
         {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-4 min-h-0">
           {messages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
@@ -515,7 +704,7 @@ const App: React.FC = () => {
                   key={msg.id}
                   className={`flex gap-4 group hover:bg-[#32353b] px-4 py-1 -mx-4 rounded transition ${
                     msg.username === user?.username ? 'bg-[#32353b]/50' : ''
-                  }`}
+                  } ${msg.type === 'break' ? 'bg-yellow-500/10 border-l-4 border-yellow-500' : ''}`}
                 >
                   <img
                     src={msg.avatar}
@@ -541,7 +730,7 @@ const App: React.FC = () => {
                         <img
                           src={msg.imageUrl}
                           alt="Uploaded"
-                          className="max-w-md rounded-lg cursor-pointer hover:opacity-90 transition"
+                          className="max-w-full md:max-w-md rounded-lg cursor-pointer hover:opacity-90 transition"
                           onClick={() => window.open(msg.imageUrl, '_blank')}
                         />
                       </div>
@@ -551,7 +740,7 @@ const App: React.FC = () => {
                         <img
                           src={msg.gifUrl}
                           alt="GIF"
-                          className="max-w-md rounded-lg cursor-pointer"
+                          className="max-w-full md:max-w-md rounded-lg cursor-pointer"
                         />
                       </div>
                     )}
@@ -567,24 +756,32 @@ const App: React.FC = () => {
         </div>
 
         {/* Input Area */}
-        <div className="p-4 bg-[#36393f] border-t border-[#202225]">
-          <div className="flex gap-2 max-w-4xl">
+        <div className="p-2 md:p-4 bg-[#36393f] border-t border-[#202225] flex-shrink-0">
+          <div className="flex gap-2">
             <div className="flex gap-1">
               <button
                 onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading || !user}
+                disabled={isLoading}
                 className="p-2 text-gray-400 hover:text-white hover:bg-[#40444b] rounded transition disabled:opacity-50"
                 title="Fotoğraf Yükle"
               >
-                <Paperclip size={20} />
+                <Paperclip size={18} />
               </button>
               <button
                 onClick={() => setShowGiphyPicker(true)}
-                disabled={isLoading || !user}
+                disabled={isLoading}
                 className="p-2 text-gray-400 hover:text-white hover:bg-[#40444b] rounded transition disabled:opacity-50"
                 title="GIF Gönder"
               >
-                <Smile size={20} />
+                <Smile size={18} />
+              </button>
+              <button
+                onClick={handleBreak}
+                disabled={isLoading}
+                className="p-2 text-orange-400 hover:text-orange-300 hover:bg-[#40444b] rounded transition disabled:opacity-50"
+                title="Sigara İçme Molası"
+              >
+                <Cigarette size={18} />
               </button>
               <input
                 ref={fileInputRef}
@@ -602,17 +799,17 @@ const App: React.FC = () => {
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSendMessage()}
-              placeholder={`#Kutuphane Chat'te mesaj gönder`}
-              disabled={isLoading || !user}
-              className="flex-1 px-4 py-2.5 bg-[#40444b] border border-[#202225] rounded text-white placeholder-gray-500 focus:outline-none focus:border-transparent transition disabled:opacity-50"
+              placeholder="Mesaj gönder..."
+              disabled={isLoading}
+              className="flex-1 px-4 py-2 bg-[#40444b] border border-[#202225] rounded text-white placeholder-gray-500 focus:outline-none focus:border-transparent transition disabled:opacity-50 text-sm md:text-base"
             />
             <button
               onClick={handleSendMessage}
-              disabled={!inputMessage.trim() || isLoading || !user}
-              className="px-6 py-2.5 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded font-medium disabled:bg-gray-600 disabled:cursor-not-allowed transition flex items-center gap-2"
+              disabled={!inputMessage.trim() || isLoading}
+              className="px-4 md:px-6 py-2.5 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded font-medium disabled:bg-gray-600 disabled:cursor-not-allowed transition flex items-center gap-2"
             >
               {isLoading ? (
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <div className="w-4 h-4 md:w-5 md:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
               ) : (
                 <Send size={18} />
               )}
@@ -643,13 +840,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Login Modal */}
-      <LoginModal
-        isOpen={showLoginModal && !user}
-        onClose={() => {}}
-        onLogin={handleLogin}
-      />
-
       {/* GIPHY Picker */}
       {showGiphyPicker && (
         <GiphyPicker
@@ -671,6 +861,11 @@ const App: React.FC = () => {
         }
         .animate-slideIn {
           animation: slideIn 0.3s ease-out;
+        }
+        @media (max-width: 768px) {
+          .md\\:flex {
+            display: none;
+          }
         }
       `}</style>
     </div>
