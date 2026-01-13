@@ -121,88 +121,52 @@ const Whiteboard: React.FC<{
   strokes: WhiteboardStroke[];
 }> = ({ channelId, user, strokes }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentTool, setCurrentTool] = useState<'pen' | 'eraser'>('pen');
   const [currentColor, setCurrentColor] = useState('#ffffff');
   const [lineWidth, setLineWidth] = useState(3);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [scale, setScale] = useState(1);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
   const currentStrokeRef = useRef<Array<{ x: number; y: number }>>([]);
 
   const colors = ['#ffffff', '#000000', '#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
-  
-  // Canvas dimensions (infinite canvas)
-  const CANVAS_WIDTH = 20000;
-  const CANVAS_HEIGHT = 20000;
 
-  // Draw all strokes on canvas (infinite canvas with pan/zoom)
+  // Draw all strokes on canvas
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !containerRef.current) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const container = containerRef.current;
-    const rect = container.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-
     const updateCanvas = () => {
-      if (!containerRef.current) return;
-      const currentRect = containerRef.current.getBoundingClientRect();
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
       
-      // Set canvas size to viewport size
-      canvas.width = currentRect.width * dpr;
-      canvas.height = currentRect.height * dpr;
+      // Set actual canvas size
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
       
       // Scale context for high DPI displays
       ctx.scale(dpr, dpr);
       
       // Set display size
-      canvas.style.width = `${currentRect.width}px`;
-      canvas.style.height = `${currentRect.height}px`;
+      canvas.style.width = `${rect.width}px`;
+      canvas.style.height = `${rect.height}px`;
 
       // Clear canvas
       ctx.fillStyle = '#1a1c1f';
-      ctx.fillRect(0, 0, currentRect.width, currentRect.height);
+      ctx.fillRect(0, 0, rect.width, rect.height);
 
-      // Calculate viewport bounds in world coordinates
-      const viewportMinX = -offset.x / scale;
-      const viewportMaxX = (-offset.x + currentRect.width) / scale;
-      const viewportMinY = -offset.y / scale;
-      const viewportMaxY = (-offset.y + currentRect.height) / scale;
-
-      // Apply transform
-      ctx.save();
-      ctx.translate(offset.x, offset.y);
-      ctx.scale(scale, scale);
-
-      // Draw only strokes that are visible in viewport (with padding for smooth scrolling)
-      const padding = 500;
+      // Draw all strokes
       strokes.forEach((stroke) => {
         if (stroke.points.length < 2) return;
-
-        // Check if stroke is in viewport
-        const strokeInViewport = stroke.points.some((p) => 
-          p.x >= viewportMinX - padding && 
-          p.x <= viewportMaxX + padding && 
-          p.y >= viewportMinY - padding && 
-          p.y <= viewportMaxY + padding
-        );
-
-        if (!strokeInViewport) return;
 
         ctx.beginPath();
         ctx.strokeStyle = stroke.tool === 'eraser' ? '#1a1c1f' : stroke.color;
         ctx.lineWidth = stroke.lineWidth;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
 
         ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
         for (let i = 1; i < stroke.points.length; i++) {
@@ -210,30 +174,29 @@ const Whiteboard: React.FC<{
         }
         ctx.stroke();
       });
-
-      ctx.restore();
     };
 
     updateCanvas();
-    const handleResize = () => updateCanvas();
+
+    const handleResize = () => {
+      updateCanvas();
+    };
+
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [strokes, offset, scale]);
+  }, [strokes]);
 
-  const getPointFromEvent = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>): { x: number; y: number } | null => {
-    const container = containerRef.current;
-    if (!container) return null;
+  const getPointFromEvent = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
 
-    const rect = container.getBoundingClientRect();
+    const rect = canvas.getBoundingClientRect();
     const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0]?.clientY : e.clientY;
 
-    if (clientX === undefined || clientY === undefined) return null;
-
-    // Convert screen coordinates to world coordinates
     return {
-      x: (clientX - rect.left - offset.x) / scale,
-      y: (clientY - rect.top - offset.y) / scale
+      x: clientX - rect.left,
+      y: clientY - rect.top
     };
   };
 
@@ -290,63 +253,17 @@ const Whiteboard: React.FC<{
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    // Middle mouse button or Ctrl/Cmd + Left click = pan
-    if (e.button === 1 || (e.button === 0 && (e.ctrlKey || e.metaKey))) {
-      setIsPanning(true);
-      setPanStart({ x: e.clientX - offset.x, y: e.clientY - offset.y });
-      e.preventDefault();
-      return;
-    }
-    
-    // Left click = draw
-    if (e.button === 0) {
-      const point = getPointFromEvent(e);
-      if (point) startDrawing(point);
-    }
+    const point = getPointFromEvent(e);
+    if (point) startDrawing(point);
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (isPanning) {
-      setOffset({
-        x: e.clientX - panStart.x,
-        y: e.clientY - panStart.y
-      });
-      return;
-    }
-    
     const point = getPointFromEvent(e);
     if (point) draw(point);
-  };
-
-  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (isPanning) {
-      setIsPanning(false);
-      return;
-    }
-    stopDrawing();
-  };
-
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    const container = containerRef.current;
-    if (!container) return;
-
-    const rect = container.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    // Zoom factor
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    const newScale = Math.max(0.1, Math.min(5, scale * delta));
-
-    // Calculate new offset to zoom towards mouse position
-    const newOffset = {
-      x: mouseX - (mouseX - offset.x) * (newScale / scale),
-      y: mouseY - (mouseY - offset.y) * (newScale / scale)
     };
 
-    setScale(newScale);
-    setOffset(newOffset);
+    const handleMouseUp = () => {
+    stopDrawing();
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
@@ -442,37 +359,19 @@ const Whiteboard: React.FC<{
       </div>
       
       {/* Canvas */}
-      <div 
-        ref={containerRef}
-        className="flex-1 relative overflow-hidden bg-[#1a1c1f]"
-        style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
-      >
+      <div className="flex-1 relative overflow-hidden bg-[#1a1c1f]">
         <canvas
           ref={canvasRef}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          onWheel={handleWheel}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className="absolute inset-0 w-full h-full"
-          style={{ 
-            touchAction: 'none',
-            cursor: isPanning ? 'grabbing' : isDrawing ? 'crosshair' : 'grab'
-          }}
+          className="absolute inset-0 w-full h-full cursor-crosshair"
+          style={{ touchAction: 'none' }}
         />
-        {/* Zoom indicator */}
-        <div className="absolute bottom-4 left-4 bg-black/50 text-white px-3 py-1 rounded-lg text-sm">
-          {Math.round(scale * 100)}%
-        </div>
-        {/* Instructions */}
-        <div className="absolute top-4 right-4 bg-black/50 text-white px-3 py-1 rounded-lg text-xs max-w-xs">
-          <div>🖱️ Sol tık: Çiz</div>
-          <div>🖱️ Orta tık / Space: Kaydır</div>
-          <div>🖱️ Scroll: Yakınlaştır/Uzaklaştır</div>
-        </div>
       </div>
     </div>
   );
@@ -1937,12 +1836,12 @@ const App: React.FC = () => {
                   <BookOpen size={16} className={selectedCourse === course.id ? 'text-white' : 'text-gray-400'} />
                   <span className={`text-sm truncate font-medium ${selectedCourse === course.id ? 'text-white' : 'text-gray-300'}`}>
                     {course.name}
-                  </span>
-                </div>
+                        </span>
+                    </div>
               ))}
-            </div>
                     </div>
                 </div>
+            </div>
 
         {/* User Footer */}
         <div className={`h-16 bg-gradient-to-t ${darkMode ? 'from-black/40' : 'from-gray-100/40'} to-transparent border-t ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between px-2 md:px-3 flex-shrink-0 backdrop-blur-sm`}>
@@ -2019,7 +1918,7 @@ const App: React.FC = () => {
               <FileText size={16} />
               PDF/Dosya Yükle
             </button>
-            <input
+                        <input 
               ref={courseFileInputRef}
               type="file"
               accept=".pdf,.doc,.docx,.txt"
@@ -2042,7 +1941,7 @@ const App: React.FC = () => {
                       <div className={`text-sm ${darkMode ? 'text-white' : 'text-gray-800'} truncate font-medium`}>{file.name}</div>
                       <div className="text-xs text-gray-400">{file.uploadedBy}</div>
                     </div>
-                  </div>
+                </div>
                 </div>
               ))}
                             </div>
@@ -2059,7 +1958,7 @@ const App: React.FC = () => {
             className="text-gray-400 hover:text-white transition-all hover:scale-110"
           >
             <Hash size={20} />
-          </button>
+                    </button>
           <span className="font-bold text-white tracking-wide">
             {channels.find(c => c.id === selectedChannel)?.name || 'Kanal Seç'}
           </span>
@@ -2069,17 +1968,17 @@ const App: React.FC = () => {
               className="text-gray-400 hover:text-white transition-all"
             >
               <Search size={20} />
-            </button>
+                    </button>
             {selectedCourse && (
               <button
                 onClick={() => setSelectedCourse(null)}
                 className="text-gray-400 hover:text-white transition-all"
               >
                 <X size={20} />
-              </button>
+                    </button>
             )}
-          </div>
-                             </div>
+                </div>
+            </div>
                              
         {/* Channel Header */}
         {selectedChannel && (
@@ -2353,7 +2252,7 @@ const App: React.FC = () => {
                     <div className="absolute bottom-full left-0 mb-2 w-48 bg-[#2f3136] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden">
                       {breakTypes.map((breakType) => {
                         const IconComponent = breakType.icon;
-                        return (
+                 return (
                           <button
                             key={breakType.id}
                             onClick={() => handleBreak(breakType)}
@@ -2471,10 +2370,10 @@ const App: React.FC = () => {
                             <div className="font-semibold">{u.username}</div>
                           </div>
                         </button>
-                      ))}
-                  </div>
+                                ))}
+                            </div>
                 )}
-              </div>
+                        </div>
               <button
                 onClick={handleSendMessage}
                 disabled={!inputMessage.trim() || isLoading}
@@ -2486,31 +2385,31 @@ const App: React.FC = () => {
                   <Send size={18} />
                 )}
               </button>
-                        </div>
+                             </div>
                         </div>
                  )}
-             </div>
-
+                             </div>
+                             
       {/* Notification Toast */}
       {notification && (
         <div className="fixed top-4 right-4 modern-card border border-white/10 rounded-lg shadow-2xl p-4 max-w-sm z-50 animate-slideIn">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#5865f2] to-[#eb459e] flex items-center justify-center flex-shrink-0">
               <MessageSquare size={20} className="text-white" />
-      </div>
+                             </div>
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-white mb-1">Yeni Mesaj</div>
               <div className="text-sm text-gray-400 mb-1">{notification.username}</div>
               <div className="text-sm text-gray-300 truncate">{notification.text}</div>
-            </div>
+                        </div>
             <button
               onClick={() => setNotification(null)}
               className="text-gray-400 hover:text-white transition"
             >
               <X size={18} />
             </button>
-          </div>
-        </div>
+                        </div>
+                    </div>
       )}
 
       {/* Emoji Picker */}
@@ -2613,8 +2512,8 @@ const App: React.FC = () => {
                   {emoji}
                 </button>
               ))}
-            </div>
-          </div>
+                        </div>
+                        </div>
         </div>
       )}
 
@@ -2643,7 +2542,7 @@ const App: React.FC = () => {
                   >
                     <ImageIcon size={14} className="text-white" />
                   </button>
-                </div>
+             </div>
                 <input
                   ref={avatarInputRef}
                   type="file"
@@ -2710,7 +2609,7 @@ const App: React.FC = () => {
                   alt={selectedUserProfile.username}
                   className="w-24 h-24 rounded-full border-4 border-[#2f3136]"
                 />
-              </div>
+      </div>
             </div>
             <div className="pt-16 pb-6 px-6 text-center">
               <h2 className="text-2xl font-bold text-white mb-2">{selectedUserProfile.username}</h2>
