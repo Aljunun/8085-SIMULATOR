@@ -274,44 +274,58 @@ const Whiteboard: React.FC<{
   const draw = (point: { x: number; y: number }) => {
     if (!isDrawing || !lastPointRef.current) return;
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    // Use requestAnimationFrame for smooth drawing
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    animationFrameRef.current = requestAnimationFrame(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
 
-    ctx.beginPath();
-    ctx.strokeStyle = currentTool === 'eraser' ? '#1a1c1f' : currentColor;
-    ctx.lineWidth = lineWidth;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
-    ctx.lineTo(point.x, point.y);
-    ctx.stroke();
+      // Draw on the existing transformed canvas
+      ctx.save();
+      ctx.translate(panOffset.x, panOffset.y);
+      ctx.scale(zoom, zoom);
 
-    currentStrokeRef.current.push(point);
-    lastPointRef.current = point;
+      ctx.beginPath();
+      ctx.strokeStyle = currentTool === 'eraser' ? '#1a1c1f' : currentColor;
+      ctx.lineWidth = lineWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
+      ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+
+      ctx.restore();
+
+      currentStrokeRef.current.push(point);
+      lastPointRef.current = point;
+    });
   };
 
-  const stopDrawing = async () => {
+  const stopDrawing = () => {
     if (!isDrawing || currentStrokeRef.current.length === 0) return;
 
     setIsDrawing(false);
 
-    // Save stroke to Firebase
-    try {
-      await addWhiteboardStroke(channelId, {
-        points: [...currentStrokeRef.current],
-        color: currentColor,
-        lineWidth: lineWidth,
-        tool: currentTool,
-        username: user.username,
-        timestamp: Date.now()
-      });
-    } catch (error) {
+    const strokeToSave = {
+      points: [...currentStrokeRef.current],
+      color: currentColor,
+      lineWidth: lineWidth,
+      tool: currentTool,
+      username: user.username,
+      timestamp: Date.now()
+    };
+
+    // Save to Firebase in background (non-blocking, fire and forget)
+    addWhiteboardStroke(channelId, strokeToSave).catch(error => {
       console.error('Error saving stroke:', error);
-    }
+    });
 
     currentStrokeRef.current = [];
     lastPointRef.current = null;
@@ -512,6 +526,7 @@ const PdfViewerWithDrawing: React.FC<{
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [drawMode, setDrawMode] = useState(false); // false = view mode, true = draw mode
   const [currentTool, setCurrentTool] = useState<'pen' | 'eraser'>('pen');
   const [currentColor, setCurrentColor] = useState('#ff0000');
   const [lineWidth, setLineWidth] = useState(3);
@@ -610,18 +625,17 @@ const PdfViewerWithDrawing: React.FC<{
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-
+    // Draw immediately on local canvas for instant feedback
     ctx.beginPath();
-    ctx.strokeStyle = currentTool === 'eraser' ? 'transparent' : currentColor;
+    ctx.strokeStyle = currentTool === 'eraser' ? 'rgba(0,0,0,0)' : currentColor;
     ctx.lineWidth = lineWidth;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.globalCompositeOperation = currentTool === 'eraser' ? 'destination-out' : 'source-over';
 
-    ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
-    ctx.lineTo(point.x, point.y);
+    const dpr = window.devicePixelRatio || 1;
+    ctx.moveTo(lastPointRef.current.x * dpr, lastPointRef.current.y * dpr);
+    ctx.lineTo(point.x * dpr, point.y * dpr);
     ctx.stroke();
 
     currentStrokeRef.current.push(point);
@@ -633,29 +647,32 @@ const PdfViewerWithDrawing: React.FC<{
 
     setIsDrawing(false);
 
-    try {
-      await addPdfStroke(pdfId, {
-        points: [...currentStrokeRef.current],
-        color: currentColor,
-        lineWidth: lineWidth,
-        tool: currentTool,
-        username: user.username,
-        timestamp: Date.now()
-      });
-    } catch (error) {
+    const strokeToSave = {
+      points: [...currentStrokeRef.current],
+      color: currentColor,
+      lineWidth: lineWidth,
+      tool: currentTool,
+      username: user.username,
+      timestamp: Date.now()
+    };
+
+    // Fire and forget - don't block drawing
+    addPdfStroke(pdfId, strokeToSave).catch(error => {
       console.error('Error saving PDF stroke:', error);
-    }
+    });
 
     currentStrokeRef.current = [];
     lastPointRef.current = null;
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!drawMode) return; // Only draw in draw mode
     const point = getPointFromEvent(e);
     if (point) startDrawing(point);
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!drawMode) return; // Only draw in draw mode
     const point = getPointFromEvent(e);
     if (point) draw(point);
   };
@@ -665,12 +682,14 @@ const PdfViewerWithDrawing: React.FC<{
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (!drawMode) return; // Only draw in draw mode
     e.preventDefault();
     const point = getPointFromEvent(e);
     if (point) startDrawing(point);
   };
 
   const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (!drawMode) return; // Only draw in draw mode
     e.preventDefault();
     const point = getPointFromEvent(e);
     if (point) draw(point);
@@ -702,16 +721,44 @@ const PdfViewerWithDrawing: React.FC<{
         {/* Toolbar */}
         <div className={`flex items-center justify-between p-3 ${darkMode ? 'bg-[#2f3136] border-white/10' : 'bg-gray-100 border-gray-200'} border-b flex-shrink-0`}>
           <div className="flex items-center gap-2">
+            {/* View/Draw Mode Toggle */}
+            <div className="flex items-center gap-1 mr-2">
+              <button
+                onClick={() => setDrawMode(false)}
+                className={`px-3 py-1.5 rounded-lg transition-all text-sm font-medium ${
+                  !drawMode 
+                    ? 'bg-[#5865f2] text-white' 
+                    : darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+                }`}
+                title="Görüntüleme Modu"
+              >
+                👁️ Görüntüle
+              </button>
+              <button
+                onClick={() => setDrawMode(true)}
+                className={`px-3 py-1.5 rounded-lg transition-all text-sm font-medium ${
+                  drawMode 
+                    ? 'bg-[#5865f2] text-white' 
+                    : darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+                }`}
+                title="Çizim Modu"
+              >
+                ✏️ Çiz
+              </button>
+            </div>
+            <div className={`w-px h-6 ${darkMode ? 'bg-white/10' : 'bg-gray-300'}`}></div>
             <button
               onClick={() => setCurrentTool('pen')}
-              className={`p-2 rounded-lg transition-all ${currentTool === 'pen' ? 'bg-[#5865f2] text-white' : darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'}`}
+              disabled={!drawMode}
+              className={`p-2 rounded-lg transition-all ${currentTool === 'pen' && drawMode ? 'bg-[#5865f2] text-white' : darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} ${!drawMode ? 'opacity-50 cursor-not-allowed' : ''}`}
               title="Kalem"
             >
               <PenTool size={20} />
             </button>
             <button
               onClick={() => setCurrentTool('eraser')}
-              className={`p-2 rounded-lg transition-all ${currentTool === 'eraser' ? 'bg-[#5865f2] text-white' : darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'}`}
+              disabled={!drawMode}
+              className={`p-2 rounded-lg transition-all ${currentTool === 'eraser' && drawMode ? 'bg-[#5865f2] text-white' : darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} ${!drawMode ? 'opacity-50 cursor-not-allowed' : ''}`}
               title="Silgi"
             >
               <Eraser size={20} />
@@ -747,8 +794,9 @@ const PdfViewerWithDrawing: React.FC<{
           <div className="flex items-center gap-2">
             <button
               onClick={handleClear}
-              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-red-400 hover:bg-red-500/10' : 'text-gray-600 hover:text-red-600 hover:bg-red-100'} rounded-lg transition-all`}
-              title="Temizle"
+              disabled={!drawMode}
+              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-red-400 hover:bg-red-500/10' : 'text-gray-600 hover:text-red-600 hover:bg-red-100'} rounded-lg transition-all ${!drawMode ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title="Çizimleri Temizle"
             >
               <Trash2 size={20} />
             </button>
@@ -779,8 +827,8 @@ const PdfViewerWithDrawing: React.FC<{
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
-            className="absolute inset-0 w-full h-full cursor-crosshair pointer-events-auto"
-            style={{ touchAction: 'none' }}
+            className={`absolute inset-0 w-full h-full ${drawMode ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'}`}
+            style={{ touchAction: drawMode ? 'none' : 'auto' }}
           />
         </div>
       </div>
@@ -1225,8 +1273,19 @@ const App: React.FC = () => {
 
     const unsubscribe = subscribeToWhiteboard(selectedChannel, (strokes) => {
       const whiteboardStrokes = strokes as WhiteboardStroke[];
-      setWhiteboardStrokes(whiteboardStrokes);
-      // Update cache
+      // Merge with local strokes (keep temp_ prefixed ones until real ones arrive)
+      setWhiteboardStrokes(prev => {
+        // Remove temp strokes that now have real counterparts
+        const nonTempStrokes = prev.filter(s => !s.id.startsWith('temp_'));
+        const tempStrokes = prev.filter(s => s.id.startsWith('temp_'));
+        
+        // Merge: real strokes + temp strokes that are very recent (< 5 seconds old)
+        const now = Date.now();
+        const recentTempStrokes = tempStrokes.filter(s => now - s.timestamp < 5000);
+        
+        return [...whiteboardStrokes, ...recentTempStrokes];
+      });
+      // Update cache with real strokes only
       setWhiteboardCache(prev => ({ ...prev, [selectedChannel]: whiteboardStrokes }));
     });
     return () => unsubscribe();
@@ -2344,6 +2403,7 @@ const App: React.FC = () => {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   if (user && selectedChannel) {
+                                    console.log('Adding reaction:', { selectedChannel, msgId: msg.id, emoji, username: user.username });
                                     addReaction(selectedChannel, msg.id, emoji, user.username);
                                   }
                                 }}
@@ -2703,6 +2763,7 @@ const App: React.FC = () => {
                   onClick={(e) => {
                     e.stopPropagation();
                     if (user && selectedChannel && showReactionPicker) {
+                      console.log('Adding reaction from picker:', { selectedChannel, msgId: showReactionPicker, emoji, username: user.username });
                       addReaction(selectedChannel, showReactionPicker, emoji, user.username);
                       setShowReactionPicker(null);
                     }

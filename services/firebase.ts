@@ -79,27 +79,41 @@ export const sendMessage = async (channelId: string, message: {
 };
 
 export const addReaction = async (channelId: string, messageId: string, emoji: string, username: string) => {
-  if (!channelId || !messageId) return;
-  const messageRef = doc(db, `channels/${channelId}/messages/${messageId}`);
-  const messageDoc = await getDoc(messageRef);
+  if (!channelId || !messageId) {
+    console.error('addReaction: channelId or messageId missing', { channelId, messageId });
+    return;
+  }
   
-  if (messageDoc.exists()) {
-    const messageData = messageDoc.data();
-    const reactions = messageData.reactions || {};
-    const emojiReactions = reactions[emoji] || [];
+  try {
+    const messageRef = doc(db, `channels/${channelId}/messages/${messageId}`);
+    const messageDoc = await getDoc(messageRef);
     
-    if (!emojiReactions.includes(username)) {
-      emojiReactions.push(username);
-    } else {
-      // Remove reaction if already exists (toggle)
-      const index = emojiReactions.indexOf(username);
-      emojiReactions.splice(index, 1);
-      if (emojiReactions.length === 0) {
-        delete reactions[emoji];
+    if (messageDoc.exists()) {
+      const messageData = messageDoc.data();
+      const reactions = messageData.reactions || {};
+      const emojiReactions = Array.isArray(reactions[emoji]) ? [...reactions[emoji]] : [];
+      
+      if (!emojiReactions.includes(username)) {
+        emojiReactions.push(username);
+        reactions[emoji] = emojiReactions;
+      } else {
+        // Remove reaction if already exists (toggle)
+        const index = emojiReactions.indexOf(username);
+        emojiReactions.splice(index, 1);
+        if (emojiReactions.length === 0) {
+          delete reactions[emoji];
+        } else {
+          reactions[emoji] = emojiReactions;
+        }
       }
+      
+      console.log('Saving reactions:', reactions);
+      await setDoc(messageRef, { reactions }, { merge: true });
+    } else {
+      console.error('Message not found:', messageId);
     }
-    
-    await setDoc(messageRef, { reactions }, { merge: true });
+  } catch (error) {
+    console.error('Error in addReaction:', error);
   }
 };
 
@@ -108,13 +122,15 @@ export const subscribeToMessages = (channelId: string, callback: (messages: any[
   const channelMessagesRef = messagesCollection(channelId);
   const q = query(channelMessagesRef, orderBy('timestamp', 'asc'));
   
-  return onSnapshot(q, (snapshot) => {
-    const messages = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-    callback(messages);
-  }, { includeMetadataChanges: false }); // Don't trigger on metadata changes
+  return onSnapshot(q, {
+    next: (snapshot) => {
+      const messages = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      callback(messages);
+    }
+  });
 };
 
 export const clearAllMessages = async (channelId: string) => {
@@ -276,13 +292,15 @@ export const subscribeToWhiteboard = (channelId: string, callback: (strokes: any
   const strokesRef = whiteboardStrokesCollection(channelId);
   const q = query(strokesRef, orderBy('timestamp', 'asc'));
   
-  return onSnapshot(q, (snapshot) => {
-    const strokes = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-    callback(strokes);
-  }, { includeMetadataChanges: false }); // Don't trigger on metadata changes
+  return onSnapshot(q, {
+    next: (snapshot) => {
+      const strokes = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      callback(strokes);
+    }
+  });
 };
 
 // PDF drawing functions
@@ -305,13 +323,15 @@ export const subscribeToPdfDrawings = (pdfId: string, callback: (strokes: any[])
   const strokesRef = pdfDrawingsCollection(pdfId);
   const q = query(strokesRef, orderBy('timestamp', 'asc'));
   
-  return onSnapshot(q, (snapshot) => {
-    const strokes = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-    callback(strokes);
-  }, { includeMetadataChanges: false }); // Don't trigger on metadata changes
+  return onSnapshot(q, {
+    next: (snapshot) => {
+      const strokes = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      callback(strokes);
+    }
+  });
 };
 
 export const clearWhiteboard = async (channelId: string) => {
