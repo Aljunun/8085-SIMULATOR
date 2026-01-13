@@ -114,7 +114,7 @@ export const subscribeToMessages = (channelId: string, callback: (messages: any[
       ...doc.data()
     }));
     callback(messages);
-  });
+  }, { includeMetadataChanges: false }); // Don't trigger on metadata changes
 };
 
 export const clearAllMessages = async (channelId: string) => {
@@ -282,7 +282,7 @@ export const subscribeToWhiteboard = (channelId: string, callback: (strokes: any
       ...doc.data()
     }));
     callback(strokes);
-  });
+  }, { includeMetadataChanges: false }); // Don't trigger on metadata changes
 };
 
 // PDF drawing functions
@@ -311,7 +311,7 @@ export const subscribeToPdfDrawings = (pdfId: string, callback: (strokes: any[])
       ...doc.data()
     }));
     callback(strokes);
-  });
+  }, { includeMetadataChanges: false }); // Don't trigger on metadata changes
 };
 
 export const clearWhiteboard = async (channelId: string) => {

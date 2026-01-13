@@ -1049,6 +1049,8 @@ const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
+  const [messageCache, setMessageCache] = useState<{ [channelId: string]: Message[] }>({});
+  const [whiteboardCache, setWhiteboardCache] = useState<{ [channelId: string]: WhiteboardStroke[] }>({});
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showGiphyPicker, setShowGiphyPicker] = useState(false);
@@ -1176,12 +1178,18 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // Subscribe to courses
+  // Subscribe to courses - only load once
   useEffect(() => {
+    let isSubscribed = true;
     const unsubscribe = subscribeToCourses((firebaseCourses) => {
-      setCourses(firebaseCourses);
+      if (isSubscribed) {
+        setCourses(firebaseCourses);
+      }
     });
-    return () => unsubscribe();
+    return () => {
+      isSubscribed = false;
+      unsubscribe();
+    };
   }, []);
 
   // Subscribe to course files
