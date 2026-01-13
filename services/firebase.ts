@@ -63,8 +63,16 @@ export const sendMessage = async (channelId: string, message: {
   timestamp: number;
   type: 'text' | 'image' | 'gif' | 'break';
 }) => {
-  const channelMessagesRef = messagesCollection(channelId);
-  return await addDoc(channelMessagesRef, message);
+  if (!channelId) {
+    throw new Error('Channel ID is required');
+  }
+  try {
+    const channelMessagesRef = messagesCollection(channelId);
+    return await addDoc(channelMessagesRef, message);
+  } catch (error) {
+    console.error('Firebase sendMessage error:', error);
+    throw error;
+  }
 };
 
 export const subscribeToMessages = (channelId: string, callback: (messages: any[]) => void) => {

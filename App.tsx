@@ -468,6 +468,28 @@ const GiphyPicker: React.FC<{
   );
 };
 
+// Cookie helper functions
+const setCookie = (name: string, value: string, days: number = 365) => {
+  const expires = new Date();
+  expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
+  document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/`;
+};
+
+const getCookie = (name: string): string | null => {
+  const nameEQ = name + "=";
+  const ca = document.cookie.split(';');
+  for (let i = 0; i < ca.length; i++) {
+    let c = ca[i];
+    while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+    if (c.indexOf(nameEQ) === 0) return decodeURIComponent(c.substring(nameEQ.length, c.length));
+  }
+  return null;
+};
+
+const deleteCookie = (name: string) => {
+  document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
+};
+
 const App: React.FC = () => {
   const [user, setUser] = useState<UserData | null>(null);
   const [username, setUsername] = useState('');
@@ -500,6 +522,25 @@ const App: React.FC = () => {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const prevMessagesLengthRef = useRef(0);
   const typingTimeoutRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({});
+
+  // Load user from cookies on mount
+  useEffect(() => {
+    const savedUsername = getCookie('kutuphane_username');
+    const savedAvatar = getCookie('kutuphane_avatar');
+    const savedUserId = getCookie('kutuphane_userId');
+    
+    if (savedUsername && savedAvatar) {
+      const userData: UserData = {
+        username: savedUsername,
+        avatar: savedAvatar,
+        userId: savedUserId || undefined
+      };
+      setUser(userData);
+      if (savedUserId) {
+        saveUser(savedUserId, { username: savedUsername, avatar: savedAvatar });
+      }
+    }
+  }, []);
 
   // Subscribe to channels
   useEffect(() => {
@@ -649,10 +690,37 @@ const App: React.FC = () => {
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Check file size (max 2MB)
+      if (file.size > 2 * 1024 * 1024) {
+        alert('Profil resmi çok büyük. Maksimum 2MB olmalıdır.');
+        return;
+      }
+      
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64String = reader.result as string;
+        if (!base64String) {
+          alert('Profil resmi yüklenirken bir hata oluştu.');
+          return;
+        }
         setAvatar(base64String);
+        // Update cookie and user state if user is logged in
+        if (user) {
+          setCookie('kutuphane_avatar', base64String);
+          const updatedUser: UserData = { 
+            ...user, 
+            avatar: base64String 
+          };
+          setUser(updatedUser);
+          if (user.userId) {
+            saveUser(user.userId, { username: user.username, avatar: base64String }).catch(err => {
+              console.error('Error saving user avatar:', err);
+            });
+          }
+        }
+      };
+      reader.onerror = () => {
+        alert('Profil resmi okunurken bir hata oluştu.');
       };
       reader.readAsDataURL(file);
     }
@@ -660,12 +728,28 @@ const App: React.FC = () => {
 
   const handleLogin = () => {
     if (username.trim()) {
-      const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const savedUsername = getCookie('kutuphane_username');
+      const savedAvatar = getCookie('kutuphane_avatar');
+      const savedUserId = getCookie('kutuphane_userId');
+      
+      // If same username, use saved userId, otherwise create new
+      const userId = (savedUsername === username.trim() && savedUserId) 
+        ? savedUserId 
+        : `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      const finalAvatar = avatar || savedAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(username.trim())}&background=5865f2&color=fff&size=128`;
+      
       const userData: UserData = {
         username: username.trim(),
-        avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(username.trim())}&background=5865f2&color=fff&size=128`,
+        avatar: finalAvatar,
         userId: userId
       };
+      
+      // Save to cookies
+      setCookie('kutuphane_username', userData.username);
+      setCookie('kutuphane_avatar', userData.avatar);
+      setCookie('kutuphane_userId', userId);
+      
       setUser(userData);
       saveUser(userId, { username: userData.username, avatar: userData.avatar });
       setUsername('');
@@ -692,6 +776,12 @@ const App: React.FC = () => {
 
   const handleBreak = async () => {
     if (!user || !selectedChannel) return;
+    const selectedChannelData = channels.find(c => c.id === selectedChannel);
+    if (selectedChannelData?.type === 'whiteboard') return; // Skip for whiteboard channels
+    if (!user.username || !user.avatar) {
+      alert('Kullanıcı bilgileri eksik. Lütfen tekrar giriş yapın.');
+      return;
+    }
     try {
       await sendMessage(selectedChannel, {
         username: user.username,
@@ -708,6 +798,12 @@ const App: React.FC = () => {
 
   const handleImageUpload = async (file: File) => {
     if (!user || !selectedChannel) return;
+    const selectedChannelData = channels.find(c => c.id === selectedChannel);
+    if (selectedChannelData?.type === 'whiteboard') return; // Skip for whiteboard channels
+    if (!user.username || !user.avatar) {
+      alert('Kullanıcı bilgileri eksik. Lütfen tekrar giriş yapın.');
+      return;
+    }
     setIsLoading(true);
     try {
       const imageUrl = await uploadImage(file);
@@ -728,6 +824,12 @@ const App: React.FC = () => {
 
   const handleGifSelect = async (gifUrl: string) => {
     if (!user || !selectedChannel) return;
+    const selectedChannelData = channels.find(c => c.id === selectedChannel);
+    if (selectedChannelData?.type === 'whiteboard') return; // Skip for whiteboard channels
+    if (!user.username || !user.avatar) {
+      alert('Kullanıcı bilgileri eksik. Lütfen tekrar giriş yapın.');
+      return;
+    }
     setIsLoading(true);
     try {
       await sendMessage(selectedChannel, {
@@ -747,6 +849,19 @@ const App: React.FC = () => {
 
   const handleSendMessage = async () => {
     if (inputMessage.trim() && user && selectedChannel) {
+      const selectedChannelData = channels.find(c => c.id === selectedChannel);
+      if (selectedChannelData?.type === 'whiteboard') {
+        setInputMessage('');
+        return; // Skip for whiteboard channels
+      }
+      if (!selectedChannelData) {
+        alert('Kanal bulunamadı. Lütfen tekrar deneyin.');
+        return;
+      }
+      if (!user.username || !user.avatar) {
+        alert('Kullanıcı bilgileri eksik. Lütfen tekrar giriş yapın.');
+        return;
+      }
       setIsLoading(true);
       try {
         await sendMessage(selectedChannel, {
@@ -757,9 +872,10 @@ const App: React.FC = () => {
           type: 'text'
         });
         setInputMessage('');
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error sending message:', error);
-        alert('Mesaj gönderilirken bir hata oluştu. Lütfen tekrar deneyin.');
+        const errorMessage = error?.message || 'Bilinmeyen bir hata oluştu';
+        alert(`Mesaj gönderilirken bir hata oluştu: ${errorMessage}. Lütfen tekrar deneyin.`);
       } finally {
         setIsLoading(false);
       }
@@ -802,6 +918,8 @@ const App: React.FC = () => {
 
   const handleClearChat = async () => {
     if (!selectedChannel) return;
+    const selectedChannelData = channels.find(c => c.id === selectedChannel);
+    if (selectedChannelData?.type === 'whiteboard') return; // Skip for whiteboard channels
     if (confirm('Tüm sohbet geçmişini silmek istediğinize emin misiniz?')) {
       try {
         await clearAllMessages(selectedChannel);
@@ -814,6 +932,11 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
+    // Clear cookies
+    deleteCookie('kutuphane_username');
+    deleteCookie('kutuphane_avatar');
+    deleteCookie('kutuphane_userId');
+    
     setUser(null);
     setUsername('');
     setAvatar('');
