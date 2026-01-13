@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, User, Image as ImageIcon, Trash2 } from 'lucide-react';
+import { Send, User, Image as ImageIcon, Trash2, Sparkles, LogOut, MessageSquare } from 'lucide-react';
 
 interface Message {
   id: string;
@@ -34,6 +34,28 @@ const getCookie = (name: string): string | null => {
 
 const deleteCookie = (name: string) => {
   document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
+};
+
+// Floating particles component
+const FloatingParticles = () => {
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      {[...Array(20)].map((_, i) => (
+        <div
+          key={i}
+          className="absolute rounded-full bg-gradient-to-r from-purple-400/20 to-pink-400/20 blur-xl"
+          style={{
+            width: Math.random() * 200 + 50,
+            height: Math.random() * 200 + 50,
+            left: `${Math.random() * 100}%`,
+            top: `${Math.random() * 100}%`,
+            animation: `float ${15 + Math.random() * 10}s ease-in-out infinite`,
+            animationDelay: `${Math.random() * 5}s`,
+          }}
+        />
+      ))}
+    </div>
+  );
 };
 
 const App: React.FC = () => {
@@ -71,12 +93,36 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Save messages to cookies whenever they change
+  // Periodically check for new messages from other users (polling)
   useEffect(() => {
-    if (messages.length > 0) {
-      setCookie('kutuphane_messages', JSON.stringify(messages));
-    }
-  }, [messages]);
+    if (!user) return; // Only poll when user is logged in
+
+    const checkForNewMessages = () => {
+      const savedMessages = getCookie('kutuphane_messages');
+      if (savedMessages) {
+        try {
+          const parsedMessages = JSON.parse(savedMessages);
+          // Update if messages are different (by comparing last message ID or length)
+          setMessages(prevMessages => {
+            if (prevMessages.length !== parsedMessages.length) {
+              return parsedMessages;
+            }
+            const lastPrevId = prevMessages[prevMessages.length - 1]?.id;
+            const lastNewId = parsedMessages[parsedMessages.length - 1]?.id;
+            if (lastPrevId !== lastNewId) {
+              return parsedMessages;
+            }
+            return prevMessages;
+          });
+        } catch (e) {
+          console.error('Error loading messages:', e);
+        }
+      }
+    };
+
+    const interval = setInterval(checkForNewMessages, 1000); // Check every second
+    return () => clearInterval(interval);
+  }, [user]);
 
   // Auto scroll to bottom when new message arrives
   useEffect(() => {
@@ -109,7 +155,7 @@ const App: React.FC = () => {
   const handleSendMessage = () => {
     if (inputMessage.trim() && user) {
       const newMessage: Message = {
-        id: Date.now().toString(),
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
         username: user.username,
         avatar: user.avatar,
         text: inputMessage.trim(),
@@ -117,6 +163,8 @@ const App: React.FC = () => {
       };
       const updatedMessages = [...messages, newMessage];
       setMessages(updatedMessages);
+      // Save to global messages cookie (shared across all users)
+      setCookie('kutuphane_messages', JSON.stringify(updatedMessages));
       setInputMessage('');
     }
   };
@@ -137,16 +185,38 @@ const App: React.FC = () => {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
+        <FloatingParticles />
+        <style>{`
+          @keyframes float {
+            0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.3; }
+            50% { transform: translate(${Math.random() * 100 - 50}px, ${Math.random() * 100 - 50}px) scale(1.2); opacity: 0.6; }
+          }
+          @keyframes glow {
+            0%, 100% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.4), 0 0 40px rgba(168, 85, 247, 0.2); }
+            50% { box-shadow: 0 0 30px rgba(168, 85, 247, 0.6), 0 0 60px rgba(168, 85, 247, 0.4); }
+          }
+          @keyframes slideIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+        `}</style>
+        
+        <div className="relative z-10 bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-8 w-full max-w-md border border-white/20 animate-slideIn" style={{animation: 'slideIn 0.6s ease-out'}}>
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-indigo-600 mb-2">📚 Kutuphane Chat</h1>
-            <p className="text-gray-600">Kütüphane sohbetine hoş geldiniz!</p>
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 mb-4 animate-glow">
+              <MessageSquare size={40} className="text-white" />
+            </div>
+            <h1 className="text-5xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 bg-clip-text text-transparent mb-2 animate-pulse">
+              Kutuphane Chat
+            </h1>
+            <p className="text-gray-300 text-lg">Kütüphane sohbetine hoş geldiniz!</p>
           </div>
 
           <div className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
+                <User size={16} />
                 Kullanıcı Adı
               </label>
               <input
@@ -155,25 +225,29 @@ const App: React.FC = () => {
                 onChange={(e) => setUsername(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
                 placeholder="Kullanıcı adınızı girin"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+                className="w-full px-4 py-4 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all text-white placeholder-gray-400"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
+                <ImageIcon size={16} />
                 Profil Fotoğrafı (Opsiyonel)
               </label>
               <div className="flex items-center gap-4">
                 {avatar && (
-                  <img
-                    src={avatar}
-                    alt="Avatar"
-                    className="w-16 h-16 rounded-full object-cover border-2 border-indigo-500"
-                  />
+                  <div className="relative">
+                    <img
+                      src={avatar}
+                      alt="Avatar"
+                      className="w-20 h-20 rounded-full object-cover border-4 border-purple-500/50 shadow-lg shadow-purple-500/50"
+                    />
+                    <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-purple-500/20 to-pink-500/20"></div>
+                  </div>
                 )}
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
+                  className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30 border border-white/20 rounded-xl transition-all text-white font-medium backdrop-blur-sm"
                 >
                   <ImageIcon size={20} />
                   Fotoğraf Seç
@@ -191,8 +265,9 @@ const App: React.FC = () => {
             <button
               onClick={handleLogin}
               disabled={!username.trim()}
-              className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition shadow-lg hover:shadow-xl"
+              className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-4 rounded-xl font-bold text-lg hover:from-purple-500 hover:to-pink-500 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg shadow-purple-500/50 hover:shadow-xl hover:shadow-purple-500/70 transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
             >
+              <Sparkles size={20} />
               Sohbete Başla
             </button>
           </div>
@@ -202,73 +277,116 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gradient-to-br from-indigo-50 to-purple-50">
+    <div className="h-screen flex flex-col bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
+      <FloatingParticles />
+      <style>{`
+        @keyframes float {
+          0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.3; }
+          50% { transform: translate(${Math.random() * 100 - 50}px, ${Math.random() * 100 - 50}px) scale(1.2); opacity: 0.6; }
+        }
+        @keyframes messageSlide {
+          from { opacity: 0; transform: translateY(10px) scale(0.95); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes shimmer {
+          0% { background-position: -1000px 0; }
+          100% { background-position: 1000px 0; }
+        }
+      `}</style>
+
       {/* Header */}
-      <div className="bg-white shadow-md border-b border-gray-200 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-indigo-600">📚 Kutuphane Chat</h1>
+      <div className="relative z-10 bg-white/10 backdrop-blur-xl shadow-2xl border-b border-white/20 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center shadow-lg shadow-purple-500/50">
+            <MessageSquare size={24} className="text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+              Kutuphane Chat
+            </h1>
+            <p className="text-xs text-gray-400">Kütüphane sohbet platformu</p>
+          </div>
         </div>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <img
-              src={user.avatar}
-              alt={user.username}
-              className="w-10 h-10 rounded-full object-cover border-2 border-indigo-500"
-            />
-            <span className="font-medium text-gray-700">{user.username}</span>
+          <div className="flex items-center gap-3 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-xl border border-white/20">
+            <div className="relative">
+              <img
+                src={user.avatar}
+                alt={user.username}
+                className="w-10 h-10 rounded-full object-cover border-2 border-purple-500/50 shadow-lg"
+              />
+              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-slate-900"></div>
+            </div>
+            <span className="font-semibold text-white">{user.username}</span>
           </div>
           <button
             onClick={handleClearChat}
-            className="p-2 text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+            className="p-3 text-gray-400 hover:text-red-400 hover:bg-red-500/20 rounded-xl transition-all backdrop-blur-sm border border-transparent hover:border-red-500/50"
             title="Sohbeti Temizle"
           >
             <Trash2 size={20} />
           </button>
           <button
             onClick={handleLogout}
-            className="px-4 py-2 text-sm text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+            className="px-4 py-2 text-sm text-white hover:text-pink-400 hover:bg-pink-500/20 rounded-xl transition-all backdrop-blur-sm border border-white/20 hover:border-pink-500/50 flex items-center gap-2 font-medium"
           >
+            <LogOut size={16} />
             Çıkış
           </button>
         </div>
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-6 space-y-4 relative z-0">
+        <style>{`
+          .message-enter {
+            animation: messageSlide 0.3s ease-out;
+          }
+        `}</style>
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center text-gray-400">
-              <p className="text-lg">Henüz mesaj yok</p>
-              <p className="text-sm mt-2">İlk mesajınızı göndererek sohbete başlayın!</p>
+            <div className="text-center text-gray-400 bg-white/5 backdrop-blur-sm p-8 rounded-2xl border border-white/10">
+              <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 flex items-center justify-center">
+                <MessageSquare size={40} className="text-gray-500" />
+              </div>
+              <p className="text-xl font-semibold text-gray-300">Henüz mesaj yok</p>
+              <p className="text-sm mt-2 text-gray-500">İlk mesajınızı göndererek sohbete başlayın!</p>
             </div>
           </div>
         ) : (
-          messages.map((msg) => (
+          messages.map((msg, index) => (
             <div
               key={msg.id}
-              className={`flex gap-3 ${msg.username === user.username ? 'justify-end' : 'justify-start'}`}
+              className={`flex gap-3 message-enter ${msg.username === user.username ? 'justify-end' : 'justify-start'}`}
+              style={{ animationDelay: `${index * 0.05}s` }}
             >
               {msg.username !== user.username && (
-                <img
-                  src={msg.avatar}
-                  alt={msg.username}
-                  className="w-10 h-10 rounded-full object-cover flex-shrink-0"
-                />
+                <div className="relative">
+                  <img
+                    src={msg.avatar}
+                    alt={msg.username}
+                    className="w-12 h-12 rounded-full object-cover flex-shrink-0 border-2 border-purple-500/50 shadow-lg"
+                  />
+                  <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-slate-900"></div>
+                </div>
               )}
               <div
-                className={`max-w-xs lg:max-w-md px-4 py-2 rounded-2xl ${
+                className={`max-w-xs lg:max-w-md px-5 py-3 rounded-2xl backdrop-blur-xl border ${
                   msg.username === user.username
-                    ? 'bg-indigo-600 text-white rounded-br-none'
-                    : 'bg-white text-gray-800 rounded-bl-none shadow-sm'
+                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-br-none border-purple-500/50 shadow-lg shadow-purple-500/30'
+                    : 'bg-white/10 text-gray-100 rounded-bl-none border-white/20 shadow-lg'
                 }`}
               >
-                {msg.username !== user.username && (
-                  <div className="text-xs font-semibold mb-1 opacity-80">{msg.username}</div>
-                )}
-                <div className="break-words">{msg.text}</div>
+                {/* Always show username if different from current user, or if it's the same user show "Sen" */}
+                <div className={`text-xs font-bold mb-1.5 opacity-90 ${
+                  msg.username === user.username ? 'text-purple-100' : 'text-purple-300'
+                }`}>
+                  {msg.username === user.username ? 'Sen' : msg.username}
+                </div>
+                <div className="break-words text-sm leading-relaxed">{msg.text}</div>
                 <div
-                  className={`text-xs mt-1 ${
-                    msg.username === user.username ? 'text-indigo-100' : 'text-gray-500'
+                  className={`text-xs mt-2 ${
+                    msg.username === user.username ? 'text-purple-100' : 'text-gray-400'
                   }`}
                 >
                   {new Date(msg.timestamp).toLocaleTimeString('tr-TR', {
@@ -278,11 +396,14 @@ const App: React.FC = () => {
                 </div>
               </div>
               {msg.username === user.username && (
-                <img
-                  src={msg.avatar}
-                  alt={msg.username}
-                  className="w-10 h-10 rounded-full object-cover flex-shrink-0"
-                />
+                <div className="relative">
+                  <img
+                    src={msg.avatar}
+                    alt={msg.username}
+                    className="w-12 h-12 rounded-full object-cover flex-shrink-0 border-2 border-purple-500/50 shadow-lg"
+                  />
+                  <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-slate-900"></div>
+                </div>
               )}
             </div>
           ))
@@ -291,20 +412,20 @@ const App: React.FC = () => {
       </div>
 
       {/* Input Area */}
-      <div className="bg-white border-t border-gray-200 p-4">
-        <div className="flex gap-2 max-w-4xl mx-auto">
+      <div className="relative z-10 bg-white/10 backdrop-blur-xl border-t border-white/20 p-4 shadow-2xl">
+        <div className="flex gap-3 max-w-4xl mx-auto">
           <input
             type="text"
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
             placeholder="Mesajınızı yazın..."
-            className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+            className="flex-1 px-5 py-4 bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all text-white placeholder-gray-400 font-medium"
           />
           <button
             onClick={handleSendMessage}
             disabled={!inputMessage.trim()}
-            className="bg-indigo-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition flex items-center gap-2 shadow-lg hover:shadow-xl"
+            className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-8 py-4 rounded-2xl font-bold hover:from-purple-500 hover:to-pink-500 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed transition-all flex items-center gap-2 shadow-lg shadow-purple-500/50 hover:shadow-xl hover:shadow-purple-500/70 transform hover:scale-105 active:scale-95"
           >
             <Send size={20} />
             Gönder
