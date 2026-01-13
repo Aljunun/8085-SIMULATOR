@@ -131,15 +131,27 @@ const Whiteboard: React.FC<{
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
-  const [visibleStrokes, setVisibleStrokes] = useState<WhiteboardStroke[]>([]);
+  const [visibleStrokes, setVisibleStrokes] = useState<WhiteboardStroke[]>(strokes);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
   const currentStrokeRef = useRef<Array<{ x: number; y: number }>>([]);
 
   const colors = ['#ffffff', '#000000', '#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
 
+  // Initialize visible strokes when strokes change
+  useEffect(() => {
+    if (strokes.length > 0 && visibleStrokes.length === 0) {
+      setVisibleStrokes(strokes);
+    }
+  }, [strokes.length]);
+
   // Calculate viewport and filter visible strokes
   useEffect(() => {
-    if (!containerRef.current || strokes.length === 0) {
+    if (strokes.length === 0) {
+      setVisibleStrokes([]);
+      return;
+    }
+    
+    if (!containerRef.current) {
       setVisibleStrokes(strokes);
       return;
     }
@@ -181,7 +193,12 @@ const Whiteboard: React.FC<{
     if (!ctx) return;
 
     const updateCanvas = () => {
-      const rect = canvas.getBoundingClientRect();
+      if (!canvas || !containerRef.current) return;
+      
+      const container = containerRef.current;
+      const rect = container.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      
       const dpr = window.devicePixelRatio || 1;
       
       // Set actual canvas size (large for infinite canvas)
@@ -199,7 +216,7 @@ const Whiteboard: React.FC<{
 
       // Clear canvas
       ctx.fillStyle = '#1a1c1f';
-      ctx.fillRect(0, 0, rect.width, rect.height);
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
       // Draw only visible strokes (world coordinates)
       visibleStrokes.forEach((stroke) => {
