@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, User, Image as ImageIcon, Trash2, Sparkles, LogOut, MessageSquare } from 'lucide-react';
+import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Settings, Hash, Users } from 'lucide-react';
 import { sendMessage, subscribeToMessages, clearAllMessages, saveUser } from './services/firebase';
 
 interface Message {
@@ -16,55 +16,38 @@ interface UserData {
   userId?: string;
 }
 
-// Floating particles component
-const FloatingParticles = () => {
-  return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {[...Array(20)].map((_, i) => (
-        <div
-          key={i}
-          className="absolute rounded-full bg-gradient-to-r from-purple-400/20 to-pink-400/20 blur-xl"
-          style={{
-            width: Math.random() * 200 + 50,
-            height: Math.random() * 200 + 50,
-            left: `${Math.random() * 100}%`,
-            top: `${Math.random() * 100}%`,
-            animation: `float ${15 + Math.random() * 10}s ease-in-out infinite`,
-            animationDelay: `${Math.random() * 5}s`,
-          }}
-        />
-      ))}
-    </div>
-  );
+// Notification sound (using Web Audio API)
+const playNotificationSound = () => {
+  try {
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    oscillator.frequency.value = 800;
+    oscillator.type = 'sine';
+
+    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.3);
+  } catch (e) {
+    console.log('Audio notification failed:', e);
+  }
 };
 
-const App: React.FC = () => {
-  const [user, setUser] = useState<UserData | null>(null);
+// Login Modal Component
+const LoginModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onLogin: (username: string, avatar: string) => void;
+}> = ({ isOpen, onClose, onLogin }) => {
   const [username, setUsername] = useState('');
   const [avatar, setAvatar] = useState('');
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputMessage, setInputMessage] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Subscribe to Firebase messages
-  useEffect(() => {
-    if (!user) return;
-
-    const unsubscribe = subscribeToMessages((firebaseMessages) => {
-      setMessages(firebaseMessages);
-    });
-
-    return () => {
-      // Cleanup is handled by Firebase automatically
-    };
-  }, [user]);
-
-  // Auto scroll to bottom when new message arrives
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -78,18 +61,166 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogin = () => {
+  const handleSubmit = () => {
     if (username.trim()) {
-      const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const userData: UserData = {
-        username: username.trim(),
-        avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(username.trim())}&background=random&color=fff&size=128`,
-        userId: userId
-      };
-      setUser(userData);
-      // Save user to Firebase
-      saveUser(userId, { username: userData.username, avatar: userData.avatar });
+      onLogin(username.trim(), avatar);
+      setUsername('');
+      setAvatar('');
+      onClose();
     }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-[#36393f] rounded-lg shadow-2xl w-full max-w-md border border-[#202225]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-6 border-b border-[#202225]">
+          <h2 className="text-xl font-bold text-white">Kutuphane Chat'e Hoş Geldiniz</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition">
+            <X size={24} />
+          </button>
+        </div>
+        
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-semibold text-gray-300 mb-2">
+              Kullanıcı Adı
+            </label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleSubmit()}
+              placeholder="Kullanıcı adınızı girin"
+              className="w-full px-4 py-3 bg-[#202225] border border-[#202225] rounded text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] transition"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-300 mb-2">
+              Profil Fotoğrafı (Opsiyonel)
+            </label>
+            <div className="flex items-center gap-4">
+              {avatar && (
+                <img
+                  src={avatar}
+                  alt="Avatar"
+                  className="w-16 h-16 rounded-full object-cover"
+                />
+              )}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-4 py-2 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded transition"
+              >
+                <ImageIcon size={20} className="inline mr-2" />
+                Fotoğraf Seç
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleAvatarChange}
+                className="hidden"
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={handleSubmit}
+            disabled={!username.trim()}
+            className="w-full bg-[#5865f2] hover:bg-[#4752c4] text-white py-3 rounded font-semibold disabled:bg-gray-600 disabled:cursor-not-allowed transition"
+          >
+            Giriş Yap
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const App: React.FC = () => {
+  const [user, setUser] = useState<UserData | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [notification, setNotification] = useState<{ username: string; text: string } | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const prevMessagesLengthRef = useRef(0);
+
+  // Subscribe to Firebase messages
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubscribe = subscribeToMessages((firebaseMessages) => {
+      const prevLength = prevMessagesLengthRef.current;
+      setMessages(firebaseMessages);
+      
+      // Check if new message arrived from another user
+      if (firebaseMessages.length > prevLength && prevLength > 0) {
+        const lastMessage = firebaseMessages[firebaseMessages.length - 1];
+        if (lastMessage.username !== user.username) {
+          // Play sound
+          playNotificationSound();
+          
+          // Show notification
+          setNotification({
+            username: lastMessage.username,
+            text: lastMessage.text
+          });
+          
+          // Auto hide notification after 5 seconds
+          setTimeout(() => {
+            setNotification(null);
+          }, 5000);
+          
+          // Browser notification
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification(`Yeni mesaj: ${lastMessage.username}`, {
+              body: lastMessage.text,
+              icon: lastMessage.avatar
+            });
+          }
+        }
+      }
+      
+      prevMessagesLengthRef.current = firebaseMessages.length;
+    });
+
+    return () => {
+      // Cleanup
+    };
+  }, [user]);
+
+  // Request notification permission
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // Auto scroll to bottom when new message arrives
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Check if user needs to login
+  useEffect(() => {
+    if (!user) {
+      setShowLoginModal(true);
+    }
+  }, [user]);
+
+  const handleLogin = (username: string, avatar: string) => {
+    const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const userData: UserData = {
+      username: username,
+      avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(username)}&background=5865f2&color=fff&size=128`,
+      userId: userId
+    };
+    setUser(userData);
+    saveUser(userId, { username: userData.username, avatar: userData.avatar });
   };
 
   const handleSendMessage = async () => {
@@ -126,263 +257,219 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     setUser(null);
-    setUsername('');
-    setAvatar('');
+    setShowLoginModal(true);
   };
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
-        <FloatingParticles />
-        <style>{`
-          @keyframes float {
-            0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.3; }
-            50% { transform: translate(${Math.random() * 100 - 50}px, ${Math.random() * 100 - 50}px) scale(1.2); opacity: 0.6; }
-          }
-          @keyframes glow {
-            0%, 100% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.4), 0 0 40px rgba(168, 85, 247, 0.2); }
-            50% { box-shadow: 0 0 30px rgba(168, 85, 247, 0.6), 0 0 60px rgba(168, 85, 247, 0.4); }
-          }
-          @keyframes slideIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-          }
-        `}</style>
-        
-        <div className="relative z-10 bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-8 w-full max-w-md border border-white/20 animate-slideIn" style={{animation: 'slideIn 0.6s ease-out'}}>
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 mb-4 animate-glow">
-              <MessageSquare size={40} className="text-white" />
-            </div>
-            <h1 className="text-5xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 bg-clip-text text-transparent mb-2 animate-pulse">
-              Kutuphane Chat
-            </h1>
-            <p className="text-gray-300 text-lg">Kütüphane sohbetine hoş geldiniz!</p>
+  // Get unique users from messages
+  const uniqueUsers = Array.from(
+    new Map(messages.map(msg => [msg.username, { username: msg.username, avatar: msg.avatar }])).values()
+  );
+
+  return (
+    <div className="h-screen flex bg-[#36393f] text-white overflow-hidden">
+      {/* Left Sidebar - Discord style */}
+      <div className="w-60 bg-[#2f3136] flex flex-col">
+        {/* Server/Channel Header */}
+        <div className="h-12 border-b border-[#202225] flex items-center px-4 bg-[#2f3136]">
+          <div className="flex items-center gap-2">
+            <Hash size={20} className="text-gray-400" />
+            <span className="font-semibold text-white">Kutuphane Chat</span>
           </div>
+        </div>
 
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
-                <User size={16} />
-                Kullanıcı Adı
-              </label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                placeholder="Kullanıcı adınızı girin"
-                className="w-full px-4 py-4 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all text-white placeholder-gray-400"
+        {/* Users List */}
+        <div className="flex-1 overflow-y-auto p-2">
+          <div className="px-2 py-1 text-xs font-semibold text-gray-400 uppercase mb-2">
+            Online — {uniqueUsers.length}
+          </div>
+          <div className="space-y-1">
+            {uniqueUsers.map((u, idx) => (
+              <div
+                key={idx}
+                className="flex items-center gap-3 px-2 py-1.5 rounded hover:bg-[#393c43] cursor-pointer transition group"
+              >
+                <div className="relative">
+                  <img
+                    src={u.avatar}
+                    alt={u.username}
+                    className="w-8 h-8 rounded-full"
+                  />
+                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-[#2f3136]"></div>
+                </div>
+                <span className="text-sm text-gray-300 group-hover:text-white transition">
+                  {u.username}
+                </span>
+              </div>
+            ))}
+            {user && (
+              <div className="flex items-center gap-3 px-2 py-1.5 rounded bg-[#393c43] mt-2">
+                <div className="relative">
+                  <img
+                    src={user.avatar}
+                    alt={user.username}
+                    className="w-8 h-8 rounded-full"
+                  />
+                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-[#2f3136]"></div>
+                </div>
+                <span className="text-sm text-white font-medium">{user.username}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* User Info Footer */}
+        {user && (
+          <div className="h-14 bg-[#292b2f] border-t border-[#202225] flex items-center justify-between px-2">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <img
+                src={user.avatar}
+                alt={user.username}
+                className="w-8 h-8 rounded-full flex-shrink-0"
               />
+              <span className="text-sm font-medium text-white truncate">{user.username}</span>
             </div>
+            <div className="flex gap-1">
+              <button
+                onClick={handleClearChat}
+                className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-[#393c43] rounded transition"
+                title="Sohbeti Temizle"
+              >
+                <Trash2 size={18} />
+              </button>
+              <button
+                onClick={handleLogout}
+                className="p-1.5 text-gray-400 hover:text-white hover:bg-[#393c43] rounded transition"
+                title="Çıkış"
+              >
+                <LogOut size={18} />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
-            <div>
-              <label className="block text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
-                <ImageIcon size={16} />
-                Profil Fotoğrafı (Opsiyonel)
-              </label>
-              <div className="flex items-center gap-4">
-                {avatar && (
-                  <div className="relative">
-                    <img
-                      src={avatar}
-                      alt="Avatar"
-                      className="w-20 h-20 rounded-full object-cover border-4 border-purple-500/50 shadow-lg shadow-purple-500/50"
-                    />
-                    <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-purple-500/20 to-pink-500/20"></div>
-                  </div>
-                )}
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30 border border-white/20 rounded-xl transition-all text-white font-medium backdrop-blur-sm"
-                >
-                  <ImageIcon size={20} />
-                  Fotoğraf Seç
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleAvatarChange}
-                  className="hidden"
-                />
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col bg-[#36393f]">
+        {/* Messages Area */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {messages.length === 0 ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <MessageSquare size={64} className="text-gray-500 mx-auto mb-4" />
+                <p className="text-xl font-semibold text-gray-400">Henüz mesaj yok</p>
+                <p className="text-sm text-gray-500 mt-2">İlk mesajınızı göndererek sohbete başlayın!</p>
               </div>
             </div>
+          ) : (
+            <div className="space-y-4">
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex gap-4 group hover:bg-[#32353b] px-4 py-1 -mx-4 rounded transition ${
+                    msg.username === user?.username ? 'bg-[#32353b]/50' : ''
+                  }`}
+                >
+                  <img
+                    src={msg.avatar}
+                    alt={msg.username}
+                    className="w-10 h-10 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 ring-[#5865f2] transition"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline gap-2 mb-1">
+                      <span className={`font-semibold text-sm ${
+                        msg.username === user?.username ? 'text-[#5865f2]' : 'text-white'
+                      }`}>
+                        {msg.username === user?.username ? 'Sen' : msg.username}
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {new Date(msg.timestamp).toLocaleTimeString('tr-TR', {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </span>
+                    </div>
+                    <div className="text-gray-300 text-sm break-words">{msg.text}</div>
+                  </div>
+                </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </div>
 
+        {/* Input Area */}
+        <div className="p-4 bg-[#36393f] border-t border-[#202225]">
+          <div className="flex gap-2 max-w-4xl">
+            <input
+              type="text"
+              value={inputMessage}
+              onChange={(e) => setInputMessage(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSendMessage()}
+              placeholder={`#Kutuphane Chat'te mesaj gönder`}
+              disabled={isLoading || !user}
+              className="flex-1 px-4 py-2.5 bg-[#40444b] border border-[#202225] rounded text-white placeholder-gray-500 focus:outline-none focus:border-transparent transition disabled:opacity-50"
+            />
             <button
-              onClick={handleLogin}
-              disabled={!username.trim()}
-              className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-4 rounded-xl font-bold text-lg hover:from-purple-500 hover:to-pink-500 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg shadow-purple-500/50 hover:shadow-xl hover:shadow-purple-500/70 transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+              onClick={handleSendMessage}
+              disabled={!inputMessage.trim() || isLoading || !user}
+              className="px-6 py-2.5 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded font-medium disabled:bg-gray-600 disabled:cursor-not-allowed transition flex items-center gap-2"
             >
-              <Sparkles size={20} />
-              Sohbete Başla
+              {isLoading ? (
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              ) : (
+                <Send size={18} />
+              )}
             </button>
           </div>
         </div>
       </div>
-    );
-  }
 
-  return (
-    <div className="h-screen flex flex-col bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
-      <FloatingParticles />
+      {/* Notification Toast */}
+      {notification && (
+        <div className="fixed top-4 right-4 bg-[#2f3136] border border-[#202225] rounded-lg shadow-2xl p-4 max-w-sm z-50 animate-slideIn">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full bg-[#5865f2] flex items-center justify-center flex-shrink-0">
+              <MessageSquare size={20} className="text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold text-white mb-1">Yeni Mesaj</div>
+              <div className="text-sm text-gray-400 mb-1">{notification.username}</div>
+              <div className="text-sm text-gray-300 truncate">{notification.text}</div>
+            </div>
+            <button
+              onClick={() => setNotification(null)}
+              className="text-gray-400 hover:text-white transition"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Login Modal */}
+      <LoginModal
+        isOpen={showLoginModal}
+        onClose={() => {
+          if (user) setShowLoginModal(false);
+        }}
+        onLogin={handleLogin}
+      />
+
       <style>{`
-        @keyframes float {
-          0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.3; }
-          50% { transform: translate(${Math.random() * 100 - 50}px, ${Math.random() * 100 - 50}px) scale(1.2); opacity: 0.6; }
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateX(100%);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
         }
-        @keyframes messageSlide {
-          from { opacity: 0; transform: translateY(10px) scale(0.95); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        @keyframes shimmer {
-          0% { background-position: -1000px 0; }
-          100% { background-position: 1000px 0; }
+        .animate-slideIn {
+          animation: slideIn 0.3s ease-out;
         }
       `}</style>
-
-      {/* Header */}
-      <div className="relative z-10 bg-white/10 backdrop-blur-xl shadow-2xl border-b border-white/20 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center shadow-lg shadow-purple-500/50">
-            <MessageSquare size={24} className="text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-black bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-              Kutuphane Chat
-            </h1>
-            <p className="text-xs text-gray-400">Kütüphane sohbet platformu</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-3 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-xl border border-white/20">
-            <div className="relative">
-              <img
-                src={user.avatar}
-                alt={user.username}
-                className="w-10 h-10 rounded-full object-cover border-2 border-purple-500/50 shadow-lg"
-              />
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-slate-900"></div>
-            </div>
-            <span className="font-semibold text-white">{user.username}</span>
-          </div>
-          <button
-            onClick={handleClearChat}
-            className="p-3 text-gray-400 hover:text-red-400 hover:bg-red-500/20 rounded-xl transition-all backdrop-blur-sm border border-transparent hover:border-red-500/50"
-            title="Sohbeti Temizle"
-          >
-            <Trash2 size={20} />
-          </button>
-          <button
-            onClick={handleLogout}
-            className="px-4 py-2 text-sm text-white hover:text-pink-400 hover:bg-pink-500/20 rounded-xl transition-all backdrop-blur-sm border border-white/20 hover:border-pink-500/50 flex items-center gap-2 font-medium"
-          >
-            <LogOut size={16} />
-            Çıkış
-          </button>
-        </div>
-      </div>
-
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4 relative z-0">
-        <style>{`
-          .message-enter {
-            animation: messageSlide 0.3s ease-out;
-          }
-        `}</style>
-        {messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center text-gray-400 bg-white/5 backdrop-blur-sm p-8 rounded-2xl border border-white/10">
-              <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 flex items-center justify-center">
-                <MessageSquare size={40} className="text-gray-500" />
-              </div>
-              <p className="text-xl font-semibold text-gray-300">Henüz mesaj yok</p>
-              <p className="text-sm mt-2 text-gray-500">İlk mesajınızı göndererek sohbete başlayın!</p>
-            </div>
-          </div>
-        ) : (
-          messages.map((msg, index) => (
-            <div
-              key={msg.id}
-              className={`flex gap-3 message-enter ${msg.username === user.username ? 'justify-end' : 'justify-start'}`}
-              style={{ animationDelay: `${index * 0.05}s` }}
-            >
-              {msg.username !== user.username && (
-                <div className="relative">
-                  <img
-                    src={msg.avatar}
-                    alt={msg.username}
-                    className="w-12 h-12 rounded-full object-cover flex-shrink-0 border-2 border-purple-500/50 shadow-lg"
-                  />
-                  <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-slate-900"></div>
-                </div>
-              )}
-              <div
-                className={`max-w-xs lg:max-w-md px-5 py-3 rounded-2xl backdrop-blur-xl border ${
-                  msg.username === user.username
-                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-br-none border-purple-500/50 shadow-lg shadow-purple-500/30'
-                    : 'bg-white/10 text-gray-100 rounded-bl-none border-white/20 shadow-lg'
-                }`}
-              >
-                <div className={`text-xs font-bold mb-1.5 opacity-90 ${
-                  msg.username === user.username ? 'text-purple-100' : 'text-purple-300'
-                }`}>
-                  {msg.username === user.username ? 'Sen' : msg.username}
-                </div>
-                <div className="break-words text-sm leading-relaxed">{msg.text}</div>
-                <div
-                  className={`text-xs mt-2 ${
-                    msg.username === user.username ? 'text-purple-100' : 'text-gray-400'
-                  }`}
-                >
-                  {new Date(msg.timestamp).toLocaleTimeString('tr-TR', {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
-                </div>
-              </div>
-              {msg.username === user.username && (
-                <div className="relative">
-                  <img
-                    src={msg.avatar}
-                    alt={msg.username}
-                    className="w-12 h-12 rounded-full object-cover flex-shrink-0 border-2 border-purple-500/50 shadow-lg"
-                  />
-                  <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-slate-900"></div>
-                </div>
-              )}
-            </div>
-          ))
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input Area */}
-      <div className="relative z-10 bg-white/10 backdrop-blur-xl border-t border-white/20 p-4 shadow-2xl">
-        <div className="flex gap-3 max-w-4xl mx-auto">
-          <input
-            type="text"
-            value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSendMessage()}
-            placeholder="Mesajınızı yazın..."
-            disabled={isLoading}
-            className="flex-1 px-5 py-4 bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all text-white placeholder-gray-400 font-medium disabled:opacity-50"
-          />
-          <button
-            onClick={handleSendMessage}
-            disabled={!inputMessage.trim() || isLoading}
-            className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-8 py-4 rounded-2xl font-bold hover:from-purple-500 hover:to-pink-500 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed transition-all flex items-center gap-2 shadow-lg shadow-purple-500/50 hover:shadow-xl hover:shadow-purple-500/70 transform hover:scale-105 active:scale-95"
-          >
-            {isLoading ? (
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-            ) : (
-              <Send size={20} />
-            )}
-            Gönder
-          </button>
-        </div>
-      </div>
     </div>
   );
 };
