@@ -28,6 +28,8 @@ if (typeof window !== 'undefined') {
 // Collection references
 const messagesCollection = collection(db, 'messages');
 const usersCollection = collection(db, 'users');
+const coursesCollection = collection(db, 'courses');
+const courseFilesCollection = (courseId: string) => collection(db, `courses/${courseId}/files`);
 
 // Message functions
 export const sendMessage = async (message: {
@@ -82,6 +84,51 @@ export const uploadImage = async (file: File): Promise<string> => {
   const storageRef = ref(storage, `images/${Date.now()}_${file.name}`);
   await uploadBytes(storageRef, file);
   return await getDownloadURL(storageRef);
+};
+
+export const uploadFile = async (file: File, path: string): Promise<string> => {
+  const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
+  await uploadBytes(storageRef, file);
+  return await getDownloadURL(storageRef);
+};
+
+// Course functions
+export const createCourse = async (courseData: { name: string; description?: string; createdBy: string }) => {
+  return await addDoc(coursesCollection, {
+    ...courseData,
+    createdAt: Date.now()
+  });
+};
+
+export const subscribeToCourses = (callback: (courses: any[]) => void) => {
+  const q = query(coursesCollection, orderBy('createdAt', 'desc'));
+  return onSnapshot(q, (snapshot) => {
+    const courses = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    callback(courses);
+  });
+};
+
+export const addFileToCourse = async (courseId: string, fileData: { name: string; url: string; type: string; uploadedBy: string }) => {
+  const filesRef = courseFilesCollection(courseId);
+  return await addDoc(filesRef, {
+    ...fileData,
+    uploadedAt: Date.now()
+  });
+};
+
+export const subscribeToCourseFiles = (courseId: string, callback: (files: any[]) => void) => {
+  const filesRef = courseFilesCollection(courseId);
+  const q = query(filesRef, orderBy('uploadedAt', 'desc'));
+  return onSnapshot(q, (snapshot) => {
+    const files = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    callback(files);
+  });
 };
 
 export { db, storage };
