@@ -254,9 +254,9 @@ const Whiteboard: React.FC<{
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const point = getPointFromEvent(e);
     if (point) draw(point);
-  };
+    };
 
-  const handleMouseUp = () => {
+    const handleMouseUp = () => {
     stopDrawing();
   };
 
@@ -318,7 +318,7 @@ const Whiteboard: React.FC<{
                 title={color}
               />
             ))}
-          </div>
+        </div>
           <div className="w-px h-6 bg-white/10 mx-1"></div>
           <div className="flex items-center gap-2">
             <Minus size={16} className="text-gray-400" />
@@ -351,7 +351,7 @@ const Whiteboard: React.FC<{
           </button>
         </div>
       </div>
-
+      
       {/* Canvas */}
       <div className="flex-1 relative overflow-hidden bg-[#1a1c1f]">
         <canvas
@@ -572,7 +572,9 @@ const App: React.FC = () => {
       if (firebaseUser) {
         // Get user profile from Firestore
         const profile = await getUserProfile(firebaseUser.uid);
-        if (profile && profile.username) {
+        
+        // Always use username from profile if it exists, never use email directly
+        if (profile && profile.username && profile.username.trim() !== '') {
           setUser({
             username: profile.username,
             avatar: profile.avatar || firebaseUser.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile.username)}&background=5865f2&color=fff&size=128`,
@@ -580,9 +582,23 @@ const App: React.FC = () => {
             email: firebaseUser.email || undefined
           });
         } else {
-          // If no profile exists, use email username or displayName
-          const emailUsername = firebaseUser.email ? firebaseUser.email.split('@')[0] : null;
-          const finalUsername = firebaseUser.displayName || emailUsername || `user_${firebaseUser.uid.slice(0, 8)}`;
+          // If no profile exists or username is empty, use displayName or create from email
+          // But never use full email as username
+          let finalUsername = firebaseUser.displayName;
+          
+          if (!finalUsername || finalUsername.trim() === '') {
+            // Extract username from email (part before @)
+            if (firebaseUser.email) {
+              finalUsername = firebaseUser.email.split('@')[0];
+              // Clean up username - remove dots, make first letter uppercase
+              finalUsername = finalUsername.replace(/\./g, '_');
+              finalUsername = finalUsername.charAt(0).toUpperCase() + finalUsername.slice(1);
+            } else {
+              // Fallback to user ID
+              finalUsername = `user_${firebaseUser.uid.slice(0, 8)}`;
+            }
+          }
+          
           const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(finalUsername)}&background=5865f2&color=fff&size=128`;
           
           setUser({
@@ -592,8 +608,8 @@ const App: React.FC = () => {
             email: firebaseUser.email || undefined
           });
           
-          // Save to Firestore if profile doesn't exist
-          if (!profile) {
+          // Save to Firestore if profile doesn't exist or username is missing
+          if (!profile || !profile.username || profile.username.trim() === '') {
             await saveUser(firebaseUser.uid, {
               username: finalUsername,
               avatar: firebaseUser.photoURL || defaultAvatar
@@ -763,7 +779,7 @@ const App: React.FC = () => {
     };
   }, [inputMessage, user]);
 
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       // Check file size (max 2MB)
@@ -772,32 +788,37 @@ const App: React.FC = () => {
         return;
       }
       
+      // For preview, use base64
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64String = reader.result as string;
-        if (!base64String) {
-          alert('Profil resmi yüklenirken bir hata oluştu.');
-          return;
+        if (base64String) {
+          setAvatar(base64String);
         }
-        setAvatar(base64String);
-        // Update user profile if user is logged in
-        if (user) {
-          const updatedUser: UserData = { 
-            ...user, 
-            avatar: base64String 
-          };
-          setUser(updatedUser);
-          if (user.userId) {
-            updateUserProfile(user.userId, { avatar: base64String }).catch(err => {
-              console.error('Error updating user avatar:', err);
-            });
-          }
-        }
-      };
-      reader.onerror = () => {
-        alert('Profil resmi okunurken bir hata oluştu.');
       };
       reader.readAsDataURL(file);
+      
+      // Upload to Firebase Storage if user is logged in
+      if (user) {
+        setIsLoading(true);
+        try {
+          const avatarUrl = await uploadImage(file);
+          const updatedUser: UserData = { 
+            ...user, 
+            avatar: avatarUrl 
+          };
+          setUser(updatedUser);
+          setAvatar(avatarUrl);
+          if (user.userId) {
+            await updateUserProfile(user.userId, { avatar: avatarUrl });
+          }
+        } catch (err) {
+          console.error('Error uploading avatar:', err);
+          alert('Profil resmi yüklenirken bir hata oluştu.');
+        } finally {
+          setIsLoading(false);
+        }
+      }
     }
   };
 
@@ -817,7 +838,24 @@ const App: React.FC = () => {
 
     try {
       if (isSignUp) {
-        const finalAvatar = avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(username.trim())}&background=5865f2&color=fff&size=128`;
+        let finalAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(username.trim())}&background=5865f2&color=fff&size=128`;
+        
+        // If avatar is base64, upload it to Firebase Storage first
+        if (avatar && avatar.startsWith('data:image')) {
+          try {
+            // Convert base64 to File
+            const base64Response = await fetch(avatar);
+            const blob = await base64Response.blob();
+            const file = new File([blob], 'avatar.jpg', { type: blob.type });
+            finalAvatar = await uploadImage(file);
+          } catch (err) {
+            console.error('Error uploading avatar during signup:', err);
+            // Use default avatar if upload fails
+          }
+        } else if (avatar && avatar.startsWith('http')) {
+          finalAvatar = avatar;
+        }
+        
         await signUp(email.trim(), password, username.trim(), finalAvatar);
         setEmail('');
         setPassword('');
@@ -1078,7 +1116,7 @@ const App: React.FC = () => {
 
   // If user not logged in, show inline login
   if (!user) {
-    return (
+  return (
       <div className="h-screen flex items-center justify-center bg-gradient-to-br from-[#1a1c1f] via-[#2f3136] to-[#36393f] p-4">
         <div className="w-full max-w-md modern-card rounded-xl p-8 border border-white/10 shadow-2xl">
           <div className="text-center mb-6">
@@ -1195,7 +1233,7 @@ const App: React.FC = () => {
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-float"></div>
         <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-float" style={{animationDelay: '1s'}}></div>
       </div>
-
+      
       {/* Left Sidebar - Channels */}
       <div className={`${sidebarOpen ? 'w-60' : 'w-0'} modern-card flex flex-col transition-all duration-300 overflow-hidden md:flex relative z-10`}>
         <div className="h-14 border-b border-white/10 flex items-center px-4 flex-shrink-0 bg-gradient-to-r from-[#5865f2]/20 to-transparent">
@@ -1205,7 +1243,7 @@ const App: React.FC = () => {
             </div>
             <span className="font-bold text-white text-sm tracking-wide">Kutuphane Chat</span>
           </div>
-        </div>
+      </div>
 
         {/* Channels List */}
         <div className="flex-1 overflow-y-auto p-3 min-h-0">
@@ -1213,14 +1251,14 @@ const App: React.FC = () => {
             <div className="px-2 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
               <div className="w-1 h-4 bg-gradient-to-b from-[#5865f2] to-[#eb459e] rounded-full"></div>
               Kanallar
-            </div>
+                </div>
             <button
               onClick={() => setShowNewChannelInput(!showNewChannelInput)}
               className="p-1.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
             >
               <Plus size={16} />
             </button>
-          </div>
+                </div>
           {showNewChannelInput && (
             <div className="mb-3 space-y-2">
               <input
@@ -1254,7 +1292,7 @@ const App: React.FC = () => {
                   <PenTool size={14} className="inline mr-1" />
                   Whiteboard
                 </button>
-              </div>
+                </div>
               <button
                 onClick={handleCreateChannel}
                 className="w-full px-4 py-2 bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white rounded-lg text-sm font-semibold transition-all hover:scale-105 shadow-lg shadow-[#5865f2]/30"
@@ -1284,9 +1322,9 @@ const App: React.FC = () => {
                 <span className={`text-sm truncate font-medium ${selectedChannel === channel.id ? 'text-white' : 'text-gray-300'}`}>
                   {channel.name}
                 </span>
-              </div>
-            ))}
           </div>
+            ))}
+      </div>
 
           {/* Users List */}
           <div className="mt-6 pt-6 border-t border-white/10">
@@ -1304,22 +1342,22 @@ const App: React.FC = () => {
                     <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-0 group-hover:opacity-50 transition-opacity"></div>
                     <img src={u.avatar} alt={u.username} className="w-9 h-9 rounded-full relative z-10 ring-2 ring-white/10 group-hover:ring-[#5865f2]/50 transition-all" />
                     <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-[#2f3136] shadow-lg shadow-green-500/50"></div>
-                  </div>
+            </div>
                   <span className="text-sm text-gray-300 group-hover:text-white font-medium transition truncate">
                     {u.username}
-                  </span>
-                </div>
+                        </span>
+                    </div>
               ))}
               <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gradient-to-r from-[#5865f2]/20 to-[#eb459e]/20 border border-[#5865f2]/30 mt-2">
                 <div className="relative">
                   <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-30"></div>
                   <img src={user.avatar} alt={user.username} className="w-9 h-9 rounded-full relative z-10 ring-2 ring-[#5865f2]/50" />
                   <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-[#2f3136] shadow-lg shadow-green-500/50"></div>
-                </div>
+                    </div>
                 <span className="text-sm text-white font-bold truncate">{user.username}</span>
-              </div>
+                </div>
             </div>
-          </div>
+            </div>
 
           {/* Courses Section */}
           <div className="mt-6 pt-6 border-t border-white/10">
@@ -1337,7 +1375,7 @@ const App: React.FC = () => {
             </div>
             {showNewCourseInput && (
               <div className="mb-3 flex gap-2">
-                <input
+                        <input 
                   type="text"
                   value={newCourseName}
                   onChange={(e) => setNewCourseName(e.target.value)}
@@ -1371,8 +1409,8 @@ const App: React.FC = () => {
                 </div>
               ))}
             </div>
-          </div>
-        </div>
+                    </div>
+                </div>
 
         {/* User Footer */}
         <div className="h-16 bg-gradient-to-t from-black/40 to-transparent border-t border-white/10 flex items-center justify-between px-3 flex-shrink-0 backdrop-blur-sm">
@@ -1390,14 +1428,14 @@ const App: React.FC = () => {
               title={darkMode ? 'Açık Tema' : 'Koyu Tema'}
             >
               {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
+                    </button>
             <button
               onClick={() => setNotificationsEnabled(!notificationsEnabled)}
               className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
               title={notificationsEnabled ? 'Bildirimleri Kapat' : 'Bildirimleri Aç'}
             >
               {notificationsEnabled ? <Bell size={18} /> : <BellOff size={18} />}
-            </button>
+                    </button>
             <button
               onClick={handleClearChat}
               className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all hover:scale-110"
@@ -1411,9 +1449,9 @@ const App: React.FC = () => {
               title="Çıkış"
             >
               <LogOut size={18} />
-            </button>
-          </div>
-        </div>
+                    </button>
+                </div>
+            </div>
       </div>
 
       {/* Right Sidebar - Courses & Files */}
@@ -1466,9 +1504,9 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 </a>
-              ))}
-            </div>
-          </div>
+                                ))}
+                            </div>
+                        </div>
         </div>
       )}
 
@@ -1501,8 +1539,8 @@ const App: React.FC = () => {
               </button>
             )}
           </div>
-        </div>
-
+                             </div>
+                             
         {/* Channel Header */}
         {selectedChannel && (
           <div className="h-14 border-b border-white/10 flex items-center justify-between px-6 glass-effect flex-shrink-0 hidden md:flex">
@@ -1511,7 +1549,7 @@ const App: React.FC = () => {
               <span className="font-bold text-white text-lg">
                 {channels.find(c => c.id === selectedChannel)?.name}
               </span>
-            </div>
+                             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowSearch(!showSearch)}
@@ -1552,8 +1590,8 @@ const App: React.FC = () => {
               >
                 <X size={18} />
               </button>
-            </div>
-          </div>
+                             </div>
+                        </div>
         )}
 
         {/* Messages Area / Whiteboard */}
@@ -1569,8 +1607,8 @@ const App: React.FC = () => {
               <div className="text-center">
                 <p className="text-xl font-bold text-gray-300 mb-2">Giriş Yapın</p>
                 <p className="text-sm text-gray-500">Whiteboard kullanmak için giriş yapmalısınız</p>
-              </div>
-            </div>
+                        </div>
+                    </div>
           )
         ) : (
           <div className="flex-1 overflow-y-auto p-4 md:p-6 min-h-0">
@@ -1792,10 +1830,10 @@ const App: React.FC = () => {
                   <Send size={18} />
                 )}
               </button>
-            </div>
-          </div>
-        )}
-      </div>
+                        </div>
+                        </div>
+                 )}
+             </div>
 
       {/* Notification Toast */}
       {notification && (
@@ -1803,7 +1841,7 @@ const App: React.FC = () => {
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#5865f2] to-[#eb459e] flex items-center justify-center flex-shrink-0">
               <MessageSquare size={20} className="text-white" />
-            </div>
+      </div>
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-white mb-1">Yeni Mesaj</div>
               <div className="text-sm text-gray-400 mb-1">{notification.username}</div>

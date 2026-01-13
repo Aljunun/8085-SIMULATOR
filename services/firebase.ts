@@ -110,13 +110,16 @@ export const signUp = async (email: string, password: string, username: string, 
   const userCredential = await createUserWithEmailAndPassword(auth, email, password);
   const user = userCredential.user;
   
+  // Only update photoURL if it's not a base64 string (too long for Firebase Auth)
+  const photoURL = avatar && !avatar.startsWith('data:') ? avatar : undefined;
+  
   // Update profile with display name
   await updateProfile(user, {
     displayName: username,
-    photoURL: avatar
+    photoURL: photoURL
   });
   
-  // Save user data to Firestore
+  // Save user data to Firestore (can store base64 here)
   await setDoc(doc(db, 'users', user.uid), {
     username: username,
     avatar: avatar,
@@ -155,11 +158,15 @@ export const updateUserProfile = async (userId: string, userData: { username?: s
     updatedAt: Date.now()
   }, { merge: true });
   
-  // Update auth profile if needed
+  // Update auth profile if needed (only if avatar is not base64)
   if (auth.currentUser) {
+    const photoURL = userData.avatar && !userData.avatar.startsWith('data:') 
+      ? userData.avatar 
+      : auth.currentUser.photoURL || undefined;
+    
     await updateProfile(auth.currentUser, {
       displayName: userData.username || auth.currentUser.displayName || undefined,
-      photoURL: userData.avatar || auth.currentUser.photoURL || undefined
+      photoURL: photoURL
     });
   }
 };
