@@ -42,3 +42,130 @@ body {
   background: linear-gradient(to bottom, rgba(168, 85, 247, 0.7), rgba(236, 72, 153, 0.7));
 }
 
+/* Message content HTML styling */
+.message-content {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.message-content h1 {
+  font-size: 1.5rem;
+  font-weight: bold;
+  margin: 0.5rem 0;
+  color: #ffffff;
+}
+
+.message-content h2 {
+  font-size: 1.25rem;
+  font-weight: bold;
+  margin: 0.5rem 0;
+  color: #ffffff;
+}
+
+.message-content h3 {
+  font-size: 1.125rem;
+  font-weight: bold;
+  margin: 0.5rem 0;
+  color: #ffffff;
+}
+
+.message-content h4 {
+  font-size: 1rem;
+  font-weight: bold;
+  margin: 0.5rem 0;
+  color: #ffffff;
+}
+
+.message-content h5 {
+  font-size: 0.875rem;
+  font-weight: bold;
+  margin: 0.5rem 0;
+  color: #ffffff;
+}
+
+.message-content h6 {
+  font-size: 0.75rem;
+  font-weight: bold;
+  margin: 0.5rem 0;
+  color: #ffffff;
+}
+
+.message-content p {
+  margin: 0.5rem 0;
+}
+
+.message-content b,
+.message-content strong {
+  font-weight: bold;
+  color: #ffffff;
+}
+
+.message-content i,
+.message-content em {
+  font-style: italic;
+}
+
+.message-content u {
+  text-decoration: underline;
+}
+
+.message-content s,
+.message-content strike {
+  text-decoration: line-through;
+}
+
+.message-content code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.875em;
+}
+
+.message-content pre {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+  font-family: 'Courier New', monospace;
+  font-size: 0.875em;
+}
+
+.message-content pre code {
+  background: none;
+  padding: 0;
+}
+
+.message-content blockquote {
+  border-left: 3px solid #5865f2;
+  padding-left: 1rem;
+  margin: 0.5rem 0;
+  color: #d1d5db;
+  font-style: italic;
+}
+
+.message-content ul,
+.message-content ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+
+.message-content li {
+  margin: 0.25rem 0;
+}
+
+.message-content a {
+  color: #5865f2;
+  text-decoration: underline;
+  transition: color 0.2s;
+}
+
+.message-content a:hover {
+  color: #eb459e;
+}
+
+.message-content br {
+  line-height: 1.5;
+}
+

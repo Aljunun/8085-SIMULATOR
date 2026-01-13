@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, getDocs, writeBatch } from "firebase/firestore";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, User } from "firebase/auth";
+import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, getDocs, writeBatch, doc, setDoc, getDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAnalytics } from "firebase/analytics";
 
@@ -16,6 +17,7 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
 
@@ -103,15 +105,72 @@ export const clearAllMessages = async (channelId: string) => {
   return await batch.commit();
 };
 
+// Auth functions
+export const signUp = async (email: string, password: string, username: string, avatar: string) => {
+  const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+  const user = userCredential.user;
+  
+  // Update profile with display name
+  await updateProfile(user, {
+    displayName: username,
+    photoURL: avatar
+  });
+  
+  // Save user data to Firestore
+  await setDoc(doc(db, 'users', user.uid), {
+    username: username,
+    avatar: avatar,
+    email: email,
+    createdAt: Date.now()
+  });
+  
+  return user;
+};
+
+export const signIn = async (email: string, password: string) => {
+  return await signInWithEmailAndPassword(auth, email, password);
+};
+
+export const logOut = async () => {
+  return await signOut(auth);
+};
+
+export const onAuthChange = (callback: (user: User | null) => void) => {
+  return onAuthStateChanged(auth, callback);
+};
+
 // User functions
+export const getUserProfile = async (userId: string) => {
+  const userDoc = await getDoc(doc(db, 'users', userId));
+  if (userDoc.exists()) {
+    return userDoc.data();
+  }
+  return null;
+};
+
+export const updateUserProfile = async (userId: string, userData: { username?: string; avatar?: string }) => {
+  const userRef = doc(db, 'users', userId);
+  await setDoc(userRef, {
+    ...userData,
+    updatedAt: Date.now()
+  }, { merge: true });
+  
+  // Update auth profile if needed
+  if (auth.currentUser) {
+    await updateProfile(auth.currentUser, {
+      displayName: userData.username || auth.currentUser.displayName || undefined,
+      photoURL: userData.avatar || auth.currentUser.photoURL || undefined
+    });
+  }
+};
+
 export const saveUser = async (userId: string, userData: { username: string; avatar: string }) => {
-  const userRef = collection(db, 'users');
-  // Firestore'da userId ile document oluştur veya güncelle
-  return await addDoc(userRef, {
+  const userRef = doc(db, 'users', userId);
+  return await setDoc(userRef, {
     userId: userId,
     ...userData,
     createdAt: Date.now()
-  });
+  }, { merge: true });
 };
 
 // Storage functions
@@ -207,4 +266,4 @@ export const clearWhiteboard = async (channelId: string) => {
   return await batch.commit();
 };
 
-export { db, storage };
+export { db, storage, auth };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip, Cigarette, BookOpen, FileText, Plus, Volume2, Settings, Search, Pin, Edit2, Heart, ThumbsUp, Laugh, Star, Moon, Sun, Bell, BellOff, Users, Crown, PenTool, Eraser, Palette, Minus, Maximize } from 'lucide-react';
-import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels, addWhiteboardStroke, subscribeToWhiteboard, clearWhiteboard } from './services/firebase';
+import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip, Cigarette, BookOpen, FileText, Plus, Volume2, Settings, Search, Pin, Edit2, Heart, ThumbsUp, Laugh, Star, Moon, Sun, Bell, BellOff, Users, Crown, PenTool, Eraser, Palette, Minus, Maximize, Mail, Lock, Coffee, ChevronDown } from 'lucide-react';
+import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels, addWhiteboardStroke, subscribeToWhiteboard, clearWhiteboard, signUp, signIn, logOut, onAuthChange, getUserProfile, updateUserProfile } from './services/firebase';
 
 interface Message {
   id: string;
@@ -19,7 +19,8 @@ interface Message {
 interface UserData {
   username: string;
   avatar: string;
-  userId?: string;
+  userId: string;
+  email?: string;
 }
 
 interface Channel {
@@ -468,32 +469,73 @@ const GiphyPicker: React.FC<{
   );
 };
 
-// Cookie helper functions
-const setCookie = (name: string, value: string, days: number = 365) => {
-  const expires = new Date();
-  expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
-  document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/`;
-};
-
-const getCookie = (name: string): string | null => {
-  const nameEQ = name + "=";
-  const ca = document.cookie.split(';');
-  for (let i = 0; i < ca.length; i++) {
-    let c = ca[i];
-    while (c.charAt(0) === ' ') c = c.substring(1, c.length);
-    if (c.indexOf(nameEQ) === 0) return decodeURIComponent(c.substring(nameEQ.length, c.length));
+// HTML sanitizer - allows only safe HTML tags
+const sanitizeHTML = (html: string): string => {
+  if (!html) return '';
+  
+  // Allowed tags
+  const allowedTags = ['b', 'strong', 'i', 'em', 'u', 's', 'strike', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'a', 'span', 'div'];
+  
+  try {
+    // Create a temporary div to parse HTML
+    const temp = document.createElement('div');
+    temp.innerHTML = html;
+    
+    // Remove script tags and event handlers
+    const scripts = temp.querySelectorAll('script, iframe, object, embed, form, input, button');
+    scripts.forEach(script => script.remove());
+    
+    // Remove all tags that are not in allowed list
+    const allElements = temp.querySelectorAll('*');
+    allElements.forEach(el => {
+      const tagName = el.tagName.toLowerCase();
+      if (!allowedTags.includes(tagName)) {
+        // Replace with its content
+        const parent = el.parentNode;
+        if (parent) {
+          while (el.firstChild) {
+            parent.insertBefore(el.firstChild, el);
+          }
+          parent.removeChild(el);
+        }
+      } else {
+        // Remove all attributes except href for links
+        const attrsToRemove: string[] = [];
+        Array.from(el.attributes).forEach(attr => {
+          if (tagName === 'a' && attr.name === 'href') {
+            // Keep href but make it safe
+            const href = attr.value;
+            if (!href.startsWith('javascript:') && !href.startsWith('data:') && !href.startsWith('vbscript:')) {
+              el.setAttribute('target', '_blank');
+              el.setAttribute('rel', 'noopener noreferrer');
+            } else {
+              attrsToRemove.push(attr.name);
+            }
+          } else {
+            // Remove all other attributes
+            attrsToRemove.push(attr.name);
+          }
+        });
+        attrsToRemove.forEach(attr => el.removeAttribute(attr));
+      }
+    });
+    
+    return temp.innerHTML;
+  } catch (error) {
+    console.error('Error sanitizing HTML:', error);
+    // Return escaped HTML if sanitization fails
+    return html.replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
-  return null;
-};
-
-const deleteCookie = (name: string) => {
-  document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
 };
 
 const App: React.FC = () => {
   const [user, setUser] = useState<UserData | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [avatar, setAvatar] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [authError, setAuthError] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
@@ -516,6 +558,7 @@ const App: React.FC = () => {
   const [showSearch, setShowSearch] = useState(false);
   const [whiteboardStrokes, setWhiteboardStrokes] = useState<WhiteboardStroke[]>([]);
   const [newChannelType, setNewChannelType] = useState<'text' | 'whiteboard'>('text');
+  const [showBreakMenu, setShowBreakMenu] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const courseFileInputRef = useRef<HTMLInputElement>(null);
@@ -523,23 +566,38 @@ const App: React.FC = () => {
   const prevMessagesLengthRef = useRef(0);
   const typingTimeoutRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({});
 
-  // Load user from cookies on mount
+  // Listen to auth state changes
   useEffect(() => {
-    const savedUsername = getCookie('kutuphane_username');
-    const savedAvatar = getCookie('kutuphane_avatar');
-    const savedUserId = getCookie('kutuphane_userId');
-    
-    if (savedUsername && savedAvatar) {
-      const userData: UserData = {
-        username: savedUsername,
-        avatar: savedAvatar,
-        userId: savedUserId || undefined
-      };
-      setUser(userData);
-      if (savedUserId) {
-        saveUser(savedUserId, { username: savedUsername, avatar: savedAvatar });
+    const unsubscribe = onAuthChange(async (firebaseUser) => {
+      if (firebaseUser) {
+        // Get user profile from Firestore
+        const profile = await getUserProfile(firebaseUser.uid);
+        if (profile) {
+          setUser({
+            username: profile.username || firebaseUser.displayName || 'Kullanıcı',
+            avatar: profile.avatar || firebaseUser.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile.username || 'User')}&background=5865f2&color=fff&size=128`,
+            userId: firebaseUser.uid,
+            email: firebaseUser.email || undefined
+          });
+        } else {
+          // If no profile exists, create one
+          const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(firebaseUser.displayName || 'User')}&background=5865f2&color=fff&size=128`;
+          setUser({
+            username: firebaseUser.displayName || 'Kullanıcı',
+            avatar: firebaseUser.photoURL || defaultAvatar,
+            userId: firebaseUser.uid,
+            email: firebaseUser.email || undefined
+          });
+          await saveUser(firebaseUser.uid, {
+            username: firebaseUser.displayName || 'Kullanıcı',
+            avatar: firebaseUser.photoURL || defaultAvatar
+          });
+        }
+      } else {
+        setUser(null);
       }
-    }
+    });
+    return () => unsubscribe();
   }, []);
 
   // Subscribe to channels
@@ -610,12 +668,20 @@ const App: React.FC = () => {
             playNotificationSound();
           }
           
-          const messageText = lastMessage.type === 'break' 
-            ? '🚬 Sigara içme molası!' 
-            : lastMessage.text || lastMessage.imageUrl ? '📷 Fotoğraf' : lastMessage.gifUrl ? '🎬 GIF' : '';
+          let messageText = '';
+          if (lastMessage.type === 'break') {
+            messageText = lastMessage.text || '🚬 Sigara içme molası!';
+          } else if (lastMessage.imageUrl) {
+            messageText = '📷 Fotoğraf';
+          } else if (lastMessage.gifUrl) {
+            messageText = '🎬 GIF';
+          } else if (lastMessage.text) {
+            messageText = lastMessage.text;
+          }
+          
           setNotification({
             username: lastMessage.username,
-            text: messageText || lastMessage.text || ''
+            text: messageText
           });
           
           setTimeout(() => {
@@ -623,8 +689,11 @@ const App: React.FC = () => {
           }, 5000);
           
           if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification(lastMessage.type === 'break' ? '🚬 Sigara içme molası!' : `Yeni mesaj: ${lastMessage.username}`, {
-              body: messageText || lastMessage.text || '',
+            const notificationTitle = lastMessage.type === 'break' 
+              ? '🚬 Mola!' 
+              : `Yeni mesaj: ${lastMessage.username}`;
+            new Notification(notificationTitle, {
+              body: messageText,
               icon: lastMessage.avatar
             });
           }
@@ -704,17 +773,16 @@ const App: React.FC = () => {
           return;
         }
         setAvatar(base64String);
-        // Update cookie and user state if user is logged in
+        // Update user profile if user is logged in
         if (user) {
-          setCookie('kutuphane_avatar', base64String);
           const updatedUser: UserData = { 
             ...user, 
             avatar: base64String 
           };
           setUser(updatedUser);
           if (user.userId) {
-            saveUser(user.userId, { username: user.username, avatar: base64String }).catch(err => {
-              console.error('Error saving user avatar:', err);
+            updateUserProfile(user.userId, { avatar: base64String }).catch(err => {
+              console.error('Error updating user avatar:', err);
             });
           }
         }
@@ -726,34 +794,52 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogin = () => {
-    if (username.trim()) {
-      const savedUsername = getCookie('kutuphane_username');
-      const savedAvatar = getCookie('kutuphane_avatar');
-      const savedUserId = getCookie('kutuphane_userId');
-      
-      // If same username, use saved userId, otherwise create new
-      const userId = (savedUsername === username.trim() && savedUserId) 
-        ? savedUserId 
-        : `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      const finalAvatar = avatar || savedAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(username.trim())}&background=5865f2&color=fff&size=128`;
-      
-      const userData: UserData = {
-        username: username.trim(),
-        avatar: finalAvatar,
-        userId: userId
-      };
-      
-      // Save to cookies
-      setCookie('kutuphane_username', userData.username);
-      setCookie('kutuphane_avatar', userData.avatar);
-      setCookie('kutuphane_userId', userId);
-      
-      setUser(userData);
-      saveUser(userId, { username: userData.username, avatar: userData.avatar });
-      setUsername('');
-      setAvatar('');
+  const handleAuth = async () => {
+    if (!email.trim() || !password.trim()) {
+      setAuthError('Email ve şifre gereklidir.');
+      return;
+    }
+    
+    if (isSignUp && !username.trim()) {
+      setAuthError('Kayıt olmak için kullanıcı adı gereklidir.');
+      return;
+    }
+
+    setIsLoading(true);
+    setAuthError('');
+
+    try {
+      if (isSignUp) {
+        const finalAvatar = avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(username.trim())}&background=5865f2&color=fff&size=128`;
+        await signUp(email.trim(), password, username.trim(), finalAvatar);
+        setEmail('');
+        setPassword('');
+        setUsername('');
+        setAvatar('');
+      } else {
+        await signIn(email.trim(), password);
+        setEmail('');
+        setPassword('');
+      }
+    } catch (error: any) {
+      console.error('Auth error:', error);
+      let errorMessage = 'Bir hata oluştu. Lütfen tekrar deneyin.';
+      if (error.code === 'auth/email-already-in-use') {
+        errorMessage = 'Bu email zaten kullanılıyor.';
+      } else if (error.code === 'auth/weak-password') {
+        errorMessage = 'Şifre çok zayıf. En az 6 karakter olmalıdır.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'Geçersiz email adresi.';
+      } else if (error.code === 'auth/user-not-found') {
+        errorMessage = 'Kullanıcı bulunamadı.';
+      } else if (error.code === 'auth/wrong-password') {
+        errorMessage = 'Yanlış şifre.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      setAuthError(errorMessage);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -774,7 +860,26 @@ const App: React.FC = () => {
     }
   };
 
-  const handleBreak = async () => {
+  const breakTypes = [
+    { id: 'coffee', emoji: '☕', text: 'Kahve molası!', icon: Coffee },
+    { id: 'cigarette', emoji: '🚬', text: 'Sigara içme molası!', icon: Cigarette },
+    { id: 'masturbation', emoji: '✊', text: '31 molası!', icon: Heart },
+    { id: 'sex', emoji: '🍆', text: 'Sikiş molası!', icon: Heart }
+  ] as const;
+
+  // Close break menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (showBreakMenu && !target.closest('.break-menu-container')) {
+        setShowBreakMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showBreakMenu]);
+
+  const handleBreak = async (breakType: typeof breakTypes[number]) => {
     if (!user || !selectedChannel) return;
     const selectedChannelData = channels.find(c => c.id === selectedChannel);
     if (selectedChannelData?.type === 'whiteboard') return; // Skip for whiteboard channels
@@ -786,11 +891,12 @@ const App: React.FC = () => {
       await sendMessage(selectedChannel, {
         username: user.username,
         avatar: user.avatar,
-        text: '🚬 Sigara içme molası!',
+        text: `${breakType.emoji} ${breakType.text}`,
         timestamp: Date.now(),
         type: 'break'
       });
       playBreakSound();
+      setShowBreakMenu(false);
     } catch (error) {
       console.error('Error sending break message:', error);
     }
@@ -806,14 +912,19 @@ const App: React.FC = () => {
     }
     setIsLoading(true);
     try {
+      console.log('Uploading image:', file.name);
       const imageUrl = await uploadImage(file);
-      await sendMessage(selectedChannel, {
+      console.log('Image uploaded, URL:', imageUrl);
+      const messageData = {
         username: user.username,
         avatar: user.avatar,
         imageUrl: imageUrl,
         timestamp: Date.now(),
-        type: 'image'
-      });
+        type: 'image' as const
+      };
+      console.log('Sending message with data:', messageData);
+      await sendMessage(selectedChannel, messageData);
+      console.log('Message sent successfully');
     } catch (error) {
       console.error('Error uploading image:', error);
       alert('Fotoğraf yüklenirken bir hata oluştu.');
@@ -931,15 +1042,18 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
-    // Clear cookies
-    deleteCookie('kutuphane_username');
-    deleteCookie('kutuphane_avatar');
-    deleteCookie('kutuphane_userId');
-    
-    setUser(null);
-    setUsername('');
-    setAvatar('');
+  const handleLogout = async () => {
+    try {
+      await logOut();
+      setUser(null);
+      setEmail('');
+      setPassword('');
+      setUsername('');
+      setAvatar('');
+    } catch (error) {
+      console.error('Error logging out:', error);
+      alert('Çıkış yapılırken bir hata oluştu.');
+    }
   };
 
   // Get unique users from messages
@@ -970,49 +1084,96 @@ const App: React.FC = () => {
             <p className="text-gray-400">Kütüphane sohbet platformuna hoş geldiniz</p>
           </div>
           <div className="space-y-4">
+            {authError && (
+              <div className="p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-300 text-sm">
+                {authError}
+              </div>
+            )}
             <div>
-              <label className="block text-sm font-semibold text-gray-300 mb-2">
-                Kullanıcı Adı
+              <label className="block text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
+                <Mail size={16} />
+                Email
               </label>
               <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                placeholder="Kullanıcı adınızı girin"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleAuth()}
+                placeholder="ornek@email.com"
                 className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-gray-300 mb-2">
-                Profil Fotoğrafı (Opsiyonel)
+              <label className="block text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
+                <Lock size={16} />
+                Şifre
               </label>
-              <div className="flex items-center gap-4">
-                {avatar && (
-                  <img src={avatar} alt="Avatar" className="w-16 h-16 rounded-full object-cover ring-2 ring-white/10" />
-                )}
-                <button
-                  onClick={() => avatarInputRef.current?.click()}
-                  className="px-4 py-2 bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white rounded-lg transition-all hover:scale-105"
-                >
-                  <ImageIcon size={20} className="inline mr-2" />
-                  Fotoğraf Seç
-                </button>
-                <input
-                  ref={avatarInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleAvatarChange}
-                  className="hidden"
-                />
-              </div>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleAuth()}
+                placeholder="••••••••"
+                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
+              />
             </div>
+            {isSignUp && (
+              <>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
+                    <User size={16} />
+                    Kullanıcı Adı
+                  </label>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleAuth()}
+                    placeholder="Kullanıcı adınızı girin"
+                    className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-300 mb-2">
+                    Profil Fotoğrafı (Opsiyonel)
+                  </label>
+                  <div className="flex items-center gap-4">
+                    {avatar && (
+                      <img src={avatar} alt="Avatar" className="w-16 h-16 rounded-full object-cover ring-2 ring-white/10" />
+                    )}
+                    <button
+                      onClick={() => avatarInputRef.current?.click()}
+                      className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-lg transition-all hover:scale-105 border border-white/10"
+                    >
+                      <ImageIcon size={20} className="inline mr-2" />
+                      Fotoğraf Seç
+                    </button>
+                    <input
+                      ref={avatarInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleAvatarChange}
+                      className="hidden"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
             <button
-              onClick={handleLogin}
-              disabled={!username.trim()}
+              onClick={handleAuth}
+              disabled={isLoading || !email.trim() || !password.trim() || (isSignUp && !username.trim())}
               className="w-full bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white py-3 rounded-lg font-bold disabled:bg-gray-600 disabled:cursor-not-allowed transition-all shadow-lg shadow-[#5865f2]/30 hover:scale-105"
             >
-              Giriş Yap
+              {isLoading ? 'Yükleniyor...' : (isSignUp ? 'Kayıt Ol' : 'Giriş Yap')}
+            </button>
+            <button
+              onClick={() => {
+                setIsSignUp(!isSignUp);
+                setAuthError('');
+              }}
+              className="w-full text-center text-gray-400 hover:text-white transition text-sm"
+            >
+              {isSignUp ? 'Zaten hesabınız var mı? Giriş yapın' : 'Hesabınız yok mu? Kayıt olun'}
             </button>
           </div>
         </div>
@@ -1465,27 +1626,41 @@ const App: React.FC = () => {
                         <Pin size={12} className="text-yellow-400" />
                       )}
                     </div>
-                    {msg.type === 'image' && msg.imageUrl && (
+                    {msg.imageUrl && (
                       <div className="mb-2">
                         <img
                           src={msg.imageUrl}
                           alt="Uploaded"
-                          className="max-w-full md:max-w-md rounded-lg cursor-pointer hover:opacity-90 transition"
+                          className="max-w-full md:max-w-md rounded-lg cursor-pointer hover:opacity-90 transition shadow-lg"
                           onClick={() => window.open(msg.imageUrl, '_blank')}
+                          onError={(e) => {
+                            console.error('Image load error:', msg.imageUrl);
+                            (e.target as HTMLImageElement).style.display = 'none';
+                          }}
                         />
                       </div>
                     )}
-                    {msg.type === 'gif' && msg.gifUrl && (
+                    {msg.gifUrl && (
                       <div className="mb-2">
                         <img
                           src={msg.gifUrl}
                           alt="GIF"
-                          className="max-w-full md:max-w-md rounded-lg cursor-pointer"
+                          className="max-w-full md:max-w-md rounded-lg cursor-pointer shadow-lg"
+                          onError={(e) => {
+                            console.error('GIF load error:', msg.gifUrl);
+                            (e.target as HTMLImageElement).style.display = 'none';
+                          }}
                         />
                       </div>
                     )}
                     {msg.text && (
-                      <div className="text-gray-300 text-sm break-words">{msg.text}</div>
+                      <div 
+                        className="text-gray-300 text-sm break-words message-content"
+                        dangerouslySetInnerHTML={{ __html: sanitizeHTML(msg.text) }}
+                        style={{
+                          lineHeight: '1.5'
+                        }}
+                      />
                     )}
                     {msg.reactions && Object.keys(msg.reactions).length > 0 && (
                       <div className="flex gap-1 mt-2">
@@ -1549,15 +1724,36 @@ const App: React.FC = () => {
                   </span>
                   <div className="absolute inset-0 bg-gradient-to-r from-pink-500/10 via-purple-500/10 via-blue-500/10 to-green-500/10 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg"></div>
                 </button>
-                <button
-                  onClick={handleBreak}
-                  disabled={isLoading}
-                  className="px-3 py-2 text-orange-400 hover:text-orange-300 hover:bg-orange-500/10 rounded-lg transition-all disabled:opacity-50 hover:scale-110 font-semibold text-xs flex items-center gap-1.5 border border-orange-500/30 hover:border-orange-500/50"
-                  title="Sigara İçme Molası"
-                >
-                  <Cigarette size={16} />
-                  <span className="hidden md:inline">Mola</span>
-                </button>
+                <div className="relative break-menu-container">
+                  <button
+                    onClick={() => setShowBreakMenu(!showBreakMenu)}
+                    disabled={isLoading}
+                    className="px-3 py-2 text-orange-400 hover:text-orange-300 hover:bg-orange-500/10 rounded-lg transition-all disabled:opacity-50 hover:scale-110 font-semibold text-xs flex items-center gap-1.5 border border-orange-500/30 hover:border-orange-500/50"
+                    title="Mola Seç"
+                  >
+                    <Cigarette size={16} />
+                    <span className="hidden md:inline">Mola</span>
+                    <ChevronDown size={14} className={`transition-transform ${showBreakMenu ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showBreakMenu && (
+                    <div className="absolute bottom-full left-0 mb-2 w-48 bg-[#2f3136] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden">
+                      {breakTypes.map((breakType) => {
+                        const IconComponent = breakType.icon;
+                        return (
+                          <button
+                            key={breakType.id}
+                            onClick={() => handleBreak(breakType)}
+                            className="w-full px-4 py-3 text-left hover:bg-white/5 transition-all flex items-center gap-3 text-sm text-gray-300 hover:text-white"
+                          >
+                            <span className="text-xl">{breakType.emoji}</span>
+                            <IconComponent size={18} className="text-gray-400" />
+                            <span>{breakType.text}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
                 <input
                   ref={fileInputRef}
                   type="file"
