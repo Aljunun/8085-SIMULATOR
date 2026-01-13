@@ -572,26 +572,33 @@ const App: React.FC = () => {
       if (firebaseUser) {
         // Get user profile from Firestore
         const profile = await getUserProfile(firebaseUser.uid);
-        if (profile) {
+        if (profile && profile.username) {
           setUser({
-            username: profile.username || firebaseUser.displayName || 'Kullanıcı',
-            avatar: profile.avatar || firebaseUser.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile.username || 'User')}&background=5865f2&color=fff&size=128`,
+            username: profile.username,
+            avatar: profile.avatar || firebaseUser.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile.username)}&background=5865f2&color=fff&size=128`,
             userId: firebaseUser.uid,
             email: firebaseUser.email || undefined
           });
         } else {
-          // If no profile exists, create one
-          const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(firebaseUser.displayName || 'User')}&background=5865f2&color=fff&size=128`;
+          // If no profile exists, use email username or displayName
+          const emailUsername = firebaseUser.email ? firebaseUser.email.split('@')[0] : null;
+          const finalUsername = firebaseUser.displayName || emailUsername || `user_${firebaseUser.uid.slice(0, 8)}`;
+          const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(finalUsername)}&background=5865f2&color=fff&size=128`;
+          
           setUser({
-            username: firebaseUser.displayName || 'Kullanıcı',
+            username: finalUsername,
             avatar: firebaseUser.photoURL || defaultAvatar,
             userId: firebaseUser.uid,
             email: firebaseUser.email || undefined
           });
-          await saveUser(firebaseUser.uid, {
-            username: firebaseUser.displayName || 'Kullanıcı',
-            avatar: firebaseUser.photoURL || defaultAvatar
-          });
+          
+          // Save to Firestore if profile doesn't exist
+          if (!profile) {
+            await saveUser(firebaseUser.uid, {
+              username: finalUsername,
+              avatar: firebaseUser.photoURL || defaultAvatar
+            });
+          }
         }
       } else {
         setUser(null);
