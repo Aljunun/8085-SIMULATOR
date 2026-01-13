@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, User, Image as ImageIcon, Trash2, Sparkles, LogOut, MessageSquare } from 'lucide-react';
+import { sendMessage, subscribeToMessages, clearAllMessages, saveUser } from './services/firebase';
 
 interface Message {
   id: string;
@@ -12,29 +13,8 @@ interface Message {
 interface UserData {
   username: string;
   avatar: string;
+  userId?: string;
 }
-
-// Cookie utilities
-const setCookie = (name: string, value: string, days: number = 365) => {
-  const expires = new Date();
-  expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
-  document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/`;
-};
-
-const getCookie = (name: string): string | null => {
-  const nameEQ = name + '=';
-  const ca = document.cookie.split(';');
-  for (let i = 0; i < ca.length; i++) {
-    let c = ca[i];
-    while (c.charAt(0) === ' ') c = c.substring(1, c.length);
-    if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
-  }
-  return null;
-};
-
-const deleteCookie = (name: string) => {
-  document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
-};
 
 // Floating particles component
 const FloatingParticles = () => {
@@ -64,64 +44,21 @@ const App: React.FC = () => {
   const [avatar, setAvatar] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load user data and messages from cookies on mount
+  // Subscribe to Firebase messages
   useEffect(() => {
-    const savedUser = getCookie('kutuphane_user');
-    const savedMessages = getCookie('kutuphane_messages');
-    
-    if (savedUser) {
-      try {
-        const userData = JSON.parse(savedUser);
-        setUser(userData);
-        setUsername(userData.username);
-        setAvatar(userData.avatar);
-      } catch (e) {
-        console.error('Error loading user data:', e);
-      }
-    }
-    
-    if (savedMessages) {
-      try {
-        const parsedMessages = JSON.parse(savedMessages);
-        setMessages(parsedMessages);
-      } catch (e) {
-        console.error('Error loading messages:', e);
-      }
-    }
-  }, []);
+    if (!user) return;
 
-  // Periodically check for new messages from other users (polling)
-  useEffect(() => {
-    if (!user) return; // Only poll when user is logged in
+    const unsubscribe = subscribeToMessages((firebaseMessages) => {
+      setMessages(firebaseMessages);
+    });
 
-    const checkForNewMessages = () => {
-      const savedMessages = getCookie('kutuphane_messages');
-      if (savedMessages) {
-        try {
-          const parsedMessages = JSON.parse(savedMessages);
-          // Update if messages are different (by comparing last message ID or length)
-          setMessages(prevMessages => {
-            if (prevMessages.length !== parsedMessages.length) {
-              return parsedMessages;
-            }
-            const lastPrevId = prevMessages[prevMessages.length - 1]?.id;
-            const lastNewId = parsedMessages[parsedMessages.length - 1]?.id;
-            if (lastPrevId !== lastNewId) {
-              return parsedMessages;
-            }
-            return prevMessages;
-          });
-        } catch (e) {
-          console.error('Error loading messages:', e);
-        }
-      }
+    return () => {
+      // Cleanup is handled by Firebase automatically
     };
-
-    const interval = setInterval(checkForNewMessages, 1000); // Check every second
-    return () => clearInterval(interval);
   }, [user]);
 
   // Auto scroll to bottom when new message arrives
@@ -143,36 +80,47 @@ const App: React.FC = () => {
 
   const handleLogin = () => {
     if (username.trim()) {
+      const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const userData: UserData = {
         username: username.trim(),
-        avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(username.trim())}&background=random&color=fff&size=128`
+        avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(username.trim())}&background=random&color=fff&size=128`,
+        userId: userId
       };
       setUser(userData);
-      setCookie('kutuphane_user', JSON.stringify(userData));
+      // Save user to Firebase
+      saveUser(userId, { username: userData.username, avatar: userData.avatar });
     }
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (inputMessage.trim() && user) {
-      const newMessage: Message = {
-        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-        username: user.username,
-        avatar: user.avatar,
-        text: inputMessage.trim(),
-        timestamp: Date.now()
-      };
-      const updatedMessages = [...messages, newMessage];
-      setMessages(updatedMessages);
-      // Save to global messages cookie (shared across all users)
-      setCookie('kutuphane_messages', JSON.stringify(updatedMessages));
-      setInputMessage('');
+      setIsLoading(true);
+      try {
+        await sendMessage({
+          username: user.username,
+          avatar: user.avatar,
+          text: inputMessage.trim(),
+          timestamp: Date.now()
+        });
+        setInputMessage('');
+      } catch (error) {
+        console.error('Error sending message:', error);
+        alert('Mesaj gönderilirken bir hata oluştu. Lütfen tekrar deneyin.');
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
-  const handleClearChat = () => {
+  const handleClearChat = async () => {
     if (confirm('Tüm sohbet geçmişini silmek istediğinize emin misiniz?')) {
-      setMessages([]);
-      deleteCookie('kutuphane_messages');
+      try {
+        await clearAllMessages();
+        setMessages([]);
+      } catch (error) {
+        console.error('Error clearing messages:', error);
+        alert('Mesajlar silinirken bir hata oluştu.');
+      }
     }
   };
 
@@ -180,7 +128,6 @@ const App: React.FC = () => {
     setUser(null);
     setUsername('');
     setAvatar('');
-    deleteCookie('kutuphane_user');
   };
 
   if (!user) {
@@ -377,7 +324,6 @@ const App: React.FC = () => {
                     : 'bg-white/10 text-gray-100 rounded-bl-none border-white/20 shadow-lg'
                 }`}
               >
-                {/* Always show username if different from current user, or if it's the same user show "Sen" */}
                 <div className={`text-xs font-bold mb-1.5 opacity-90 ${
                   msg.username === user.username ? 'text-purple-100' : 'text-purple-300'
                 }`}>
@@ -418,16 +364,21 @@ const App: React.FC = () => {
             type="text"
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+            onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSendMessage()}
             placeholder="Mesajınızı yazın..."
-            className="flex-1 px-5 py-4 bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all text-white placeholder-gray-400 font-medium"
+            disabled={isLoading}
+            className="flex-1 px-5 py-4 bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all text-white placeholder-gray-400 font-medium disabled:opacity-50"
           />
           <button
             onClick={handleSendMessage}
-            disabled={!inputMessage.trim()}
+            disabled={!inputMessage.trim() || isLoading}
             className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-8 py-4 rounded-2xl font-bold hover:from-purple-500 hover:to-pink-500 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed transition-all flex items-center gap-2 shadow-lg shadow-purple-500/50 hover:shadow-xl hover:shadow-purple-500/70 transform hover:scale-105 active:scale-95"
           >
-            <Send size={20} />
+            {isLoading ? (
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <Send size={20} />
+            )}
             Gönder
           </button>
         </div>
