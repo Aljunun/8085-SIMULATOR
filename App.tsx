@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip, Cigarette, BookOpen, FileText, Plus, Volume2, Settings, Search, Pin, Edit2, Heart, ThumbsUp, Laugh, Star, Moon, Sun, Bell, BellOff, Users, Crown, PenTool, Eraser, Palette, Minus, Maximize, Mail, Lock, Coffee, ChevronDown } from 'lucide-react';
-import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels, addWhiteboardStroke, subscribeToWhiteboard, clearWhiteboard, signUp, signIn, logOut, onAuthChange, getUserProfile, updateUserProfile, addReaction, addPdfStroke, subscribeToPdfDrawings, db, loadMoreMessages } from './services/firebase';
+import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels, addWhiteboardStroke, subscribeToWhiteboard, clearWhiteboard, signUp, signIn, logOut, onAuthChange, getUserProfile, updateUserProfile, addReaction, addPdfStroke, subscribeToPdfDrawings, db } from './services/firebase';
 import { collection, getDocs, writeBatch } from 'firebase/firestore';
 import * as pdfjsLib from 'pdfjs-dist';
 
@@ -131,102 +131,78 @@ const Whiteboard: React.FC<{
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
-  const [visibleStrokes, setVisibleStrokes] = useState<WhiteboardStroke[]>(strokes);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
   const currentStrokeRef = useRef<Array<{ x: number; y: number }>>([]);
 
   const colors = ['#ffffff', '#000000', '#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
+  
+  // Canvas dimensions (infinite canvas)
+  const CANVAS_WIDTH = 20000;
+  const CANVAS_HEIGHT = 20000;
 
-  // Initialize visible strokes when strokes change
-  useEffect(() => {
-    if (strokes.length > 0 && visibleStrokes.length === 0) {
-      setVisibleStrokes(strokes);
-    }
-  }, [strokes.length]);
-
-  // Calculate viewport and filter visible strokes
-  useEffect(() => {
-    if (strokes.length === 0) {
-      setVisibleStrokes([]);
-      return;
-    }
-    
-    if (!containerRef.current) {
-      setVisibleStrokes(strokes);
-      return;
-    }
-
-    const container = containerRef.current;
-    const rect = container.getBoundingClientRect();
-    
-    // Calculate viewport in world coordinates
-    const viewport = {
-      minX: -offset.x / scale,
-      maxX: (-offset.x + rect.width) / scale,
-      minY: -offset.y / scale,
-      maxY: (-offset.y + rect.height) / scale
-    };
-
-    // Filter strokes that are visible in viewport (with some padding)
-    const padding = 200; // Extra padding to load strokes near viewport
-    const filtered = strokes.filter((stroke) => {
-      if (!stroke.points || stroke.points.length === 0) return false;
-      
-      // Check if stroke intersects with viewport
-      return stroke.points.some((p) => 
-        p.x >= viewport.minX - padding && 
-        p.x <= viewport.maxX + padding && 
-        p.y >= viewport.minY - padding && 
-        p.y <= viewport.maxY + padding
-      );
-    });
-
-    setVisibleStrokes(filtered);
-  }, [strokes, offset, scale]);
-
-  // Draw all strokes on canvas
+  // Draw all strokes on canvas (infinite canvas with pan/zoom)
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !containerRef.current) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const container = containerRef.current;
+    const rect = container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+
     const updateCanvas = () => {
-      if (!canvas || !containerRef.current) return;
+      if (!containerRef.current) return;
+      const currentRect = containerRef.current.getBoundingClientRect();
       
-      const container = containerRef.current;
-      const rect = container.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return;
-      
-      const dpr = window.devicePixelRatio || 1;
-      
-      // Set actual canvas size (large for infinite canvas)
-      const canvasWidth = 10000;
-      const canvasHeight = 10000;
-      canvas.width = canvasWidth * dpr;
-      canvas.height = canvasHeight * dpr;
+      // Set canvas size to viewport size
+      canvas.width = currentRect.width * dpr;
+      canvas.height = currentRect.height * dpr;
       
       // Scale context for high DPI displays
       ctx.scale(dpr, dpr);
       
       // Set display size
-      canvas.style.width = `${canvasWidth}px`;
-      canvas.style.height = `${canvasHeight}px`;
+      canvas.style.width = `${currentRect.width}px`;
+      canvas.style.height = `${currentRect.height}px`;
 
       // Clear canvas
       ctx.fillStyle = '#1a1c1f';
-      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+      ctx.fillRect(0, 0, currentRect.width, currentRect.height);
 
-      // Draw only visible strokes (world coordinates)
-      visibleStrokes.forEach((stroke) => {
+      // Calculate viewport bounds in world coordinates
+      const viewportMinX = -offset.x / scale;
+      const viewportMaxX = (-offset.x + currentRect.width) / scale;
+      const viewportMinY = -offset.y / scale;
+      const viewportMaxY = (-offset.y + currentRect.height) / scale;
+
+      // Apply transform
+      ctx.save();
+      ctx.translate(offset.x, offset.y);
+      ctx.scale(scale, scale);
+
+      // Draw only strokes that are visible in viewport (with padding for smooth scrolling)
+      const padding = 500;
+      strokes.forEach((stroke) => {
         if (stroke.points.length < 2) return;
+
+        // Check if stroke is in viewport
+        const strokeInViewport = stroke.points.some((p) => 
+          p.x >= viewportMinX - padding && 
+          p.x <= viewportMaxX + padding && 
+          p.y >= viewportMinY - padding && 
+          p.y <= viewportMaxY + padding
+        );
+
+        if (!strokeInViewport) return;
 
         ctx.beginPath();
         ctx.strokeStyle = stroke.tool === 'eraser' ? '#1a1c1f' : stroke.color;
         ctx.lineWidth = stroke.lineWidth;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
+        ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
 
         ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
         for (let i = 1; i < stroke.points.length; i++) {
@@ -234,25 +210,25 @@ const Whiteboard: React.FC<{
         }
         ctx.stroke();
       });
+
+      ctx.restore();
     };
 
     updateCanvas();
-
-    const handleResize = () => {
-      updateCanvas();
-    };
-
+    const handleResize = () => updateCanvas();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [visibleStrokes]);
+  }, [strokes, offset, scale]);
 
-  const getPointFromEvent = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
+  const getPointFromEvent = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>): { x: number; y: number } | null => {
+    const container = containerRef.current;
+    if (!container) return null;
 
-    const rect = canvas.getBoundingClientRect();
+    const rect = container.getBoundingClientRect();
     const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0]?.clientY : e.clientY;
+
+    if (clientX === undefined || clientY === undefined) return null;
 
     // Convert screen coordinates to world coordinates
     return {
@@ -314,14 +290,15 @@ const Whiteboard: React.FC<{
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (e.button === 1 || (e.button === 0 && e.ctrlKey) || (e.button === 0 && e.metaKey)) {
-      // Middle mouse or Ctrl/Cmd + Left mouse = pan
+    // Middle mouse button or Ctrl/Cmd + Left click = pan
+    if (e.button === 1 || (e.button === 0 && (e.ctrlKey || e.metaKey))) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - offset.x, y: e.clientY - offset.y });
       e.preventDefault();
       return;
     }
     
+    // Left click = draw
     if (e.button === 0) {
       const point = getPointFromEvent(e);
       if (point) startDrawing(point);
@@ -351,22 +328,25 @@ const Whiteboard: React.FC<{
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
+    const container = containerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Zoom factor
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.max(0.1, Math.min(5, scale * delta));
-    
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (rect) {
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-      
-      const newOffset = {
-        x: mouseX - (mouseX - offset.x) * (newScale / scale),
-        y: mouseY - (mouseY - offset.y) * (newScale / scale)
-      };
-      
-      setScale(newScale);
-      setOffset(newOffset);
-    }
+
+    // Calculate new offset to zoom towards mouse position
+    const newOffset = {
+      x: mouseX - (mouseX - offset.x) * (newScale / scale),
+      y: mouseY - (mouseY - offset.y) * (newScale / scale)
+    };
+
+    setScale(newScale);
+    setOffset(newOffset);
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
@@ -462,35 +442,36 @@ const Whiteboard: React.FC<{
       </div>
       
       {/* Canvas */}
-      <div ref={containerRef} className="flex-1 relative overflow-hidden bg-[#1a1c1f]" style={{ cursor: isPanning ? 'grabbing' : 'grab' }}>
-        <div 
-      style={{ 
-            transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-            transformOrigin: '0 0',
-            width: '10000px',
-            height: '10000px',
-            position: 'absolute',
-            top: 0,
-            left: 0
+      <div 
+        ref={containerRef}
+        className="flex-1 relative overflow-hidden bg-[#1a1c1f]"
+        style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+      >
+        <canvas
+          ref={canvasRef}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          onWheel={handleWheel}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          className="absolute inset-0 w-full h-full"
+          style={{ 
+            touchAction: 'none',
+            cursor: isPanning ? 'grabbing' : isDrawing ? 'crosshair' : 'grab'
           }}
-        >
-          <canvas
-            ref={canvasRef}
-        onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-            onWheel={handleWheel}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-            className="absolute top-0 left-0 cursor-crosshair"
-            style={{ 
-              touchAction: 'none',
-              width: '10000px',
-              height: '10000px'
-            }}
-          />
+        />
+        {/* Zoom indicator */}
+        <div className="absolute bottom-4 left-4 bg-black/50 text-white px-3 py-1 rounded-lg text-sm">
+          {Math.round(scale * 100)}%
+        </div>
+        {/* Instructions */}
+        <div className="absolute top-4 right-4 bg-black/50 text-white px-3 py-1 rounded-lg text-xs max-w-xs">
+          <div>🖱️ Sol tık: Çiz</div>
+          <div>🖱️ Orta tık / Space: Kaydır</div>
+          <div>🖱️ Scroll: Yakınlaştır/Uzaklaştır</div>
         </div>
       </div>
     </div>
@@ -1040,9 +1021,6 @@ const App: React.FC = () => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [authError, setAuthError] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
-  const [hasMoreMessages, setHasMoreMessages] = useState(true);
-  const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState('');
@@ -1219,7 +1197,6 @@ const App: React.FC = () => {
     const unsubscribe = subscribeToMessages(selectedChannel, (firebaseMessages) => {
       const prevLength = prevMessagesLengthRef.current;
       setMessages(firebaseMessages);
-      setHasMoreMessages(firebaseMessages.length >= 50); // If we got 50 messages, there might be more
       
       if (firebaseMessages.length > prevLength && prevLength > 0) {
         const lastMessage = firebaseMessages[firebaseMessages.length - 1];
@@ -1662,17 +1639,12 @@ const App: React.FC = () => {
   ).filter((u) => (u as { username: string; avatar: string }).username !== user?.username) as Array<{ username: string; avatar: string }>;
 
   // Filter messages by search
-  const filteredMessages = useMemo(() => {
-    if (!searchQuery.trim()) return messages;
-    const searchLower = searchQuery.toLowerCase();
-    return messages.filter((msg) => {
-      return (
-        msg.text?.toLowerCase().includes(searchLower) ||
-        msg.username.toLowerCase().includes(searchLower) ||
-        msg.type === 'break'
-      );
-    });
-  }, [messages, searchQuery]);
+  const filteredMessages = searchQuery.trim()
+    ? messages.filter(msg => 
+        msg.text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        msg.username.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : messages;
 
   // If user not logged in, show inline login
   if (!user) {
@@ -1965,12 +1937,12 @@ const App: React.FC = () => {
                   <BookOpen size={16} className={selectedCourse === course.id ? 'text-white' : 'text-gray-400'} />
                   <span className={`text-sm truncate font-medium ${selectedCourse === course.id ? 'text-white' : 'text-gray-300'}`}>
                     {course.name}
-                        </span>
-                    </div>
+                  </span>
+                </div>
               ))}
+            </div>
                     </div>
                 </div>
-            </div>
 
         {/* User Footer */}
         <div className={`h-16 bg-gradient-to-t ${darkMode ? 'from-black/40' : 'from-gray-100/40'} to-transparent border-t ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between px-2 md:px-3 flex-shrink-0 backdrop-blur-sm`}>
@@ -2047,7 +2019,7 @@ const App: React.FC = () => {
               <FileText size={16} />
               PDF/Dosya Yükle
             </button>
-                        <input 
+            <input
               ref={courseFileInputRef}
               type="file"
               accept=".pdf,.doc,.docx,.txt"
@@ -2070,7 +2042,7 @@ const App: React.FC = () => {
                       <div className={`text-sm ${darkMode ? 'text-white' : 'text-gray-800'} truncate font-medium`}>{file.name}</div>
                       <div className="text-xs text-gray-400">{file.uploadedBy}</div>
                     </div>
-                </div>
+                  </div>
                 </div>
               ))}
                             </div>
@@ -2087,7 +2059,7 @@ const App: React.FC = () => {
             className="text-gray-400 hover:text-white transition-all hover:scale-110"
           >
             <Hash size={20} />
-                    </button>
+          </button>
           <span className="font-bold text-white tracking-wide">
             {channels.find(c => c.id === selectedChannel)?.name || 'Kanal Seç'}
           </span>
@@ -2097,17 +2069,17 @@ const App: React.FC = () => {
               className="text-gray-400 hover:text-white transition-all"
             >
               <Search size={20} />
-                    </button>
+            </button>
             {selectedCourse && (
               <button
                 onClick={() => setSelectedCourse(null)}
                 className="text-gray-400 hover:text-white transition-all"
               >
                 <X size={20} />
-                    </button>
+              </button>
             )}
-                </div>
-            </div>
+          </div>
+                             </div>
                              
         {/* Channel Header */}
         {selectedChannel && (
@@ -2201,48 +2173,7 @@ const App: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div 
-              ref={messagesContainerRef}
-              className="space-y-3 overflow-y-auto overflow-x-hidden flex-1"
-              onScroll={useCallback((e: React.UIEvent<HTMLDivElement>) => {
-                const container = e.currentTarget;
-                // Load more when scrolled to top (throttled)
-                if (container.scrollTop < 100 && hasMoreMessages && !isLoadingMoreMessages && selectedChannel) {
-                  setIsLoadingMoreMessages(true);
-                  const oldestMessage = messages[0];
-                  if (oldestMessage) {
-                    loadMoreMessages(selectedChannel, oldestMessage.timestamp, 50)
-                      .then((moreMessages) => {
-                        if (moreMessages.length > 0) {
-                          const currentScrollHeight = container.scrollHeight;
-                          setMessages(prev => [...moreMessages, ...prev]);
-                          setHasMoreMessages(moreMessages.length >= 30);
-                          // Maintain scroll position
-                          requestAnimationFrame(() => {
-                            const newScrollHeight = container.scrollHeight;
-                            container.scrollTop = newScrollHeight - currentScrollHeight;
-                          });
-                        } else {
-                          setHasMoreMessages(false);
-                        }
-                      })
-                      .catch((error) => {
-                        console.error('Error loading more messages:', error);
-                      })
-                      .finally(() => {
-                        setIsLoadingMoreMessages(false);
-                      });
-                  } else {
-                    setIsLoadingMoreMessages(false);
-                  }
-                }
-              }, [hasMoreMessages, isLoadingMoreMessages, selectedChannel, messages])}
-            >
-              {isLoadingMoreMessages && (
-                <div className="text-center py-2 text-gray-400 text-sm">
-                  Daha fazla mesaj yükleniyor...
-                </div>
-              )}
+            <div className="space-y-3">
               {filteredMessages.map((msg) => {
                 const isMentioned = user && (
                   msg.mentions?.includes(user.username) || 
@@ -2320,10 +2251,10 @@ const App: React.FC = () => {
                         <img
                           src={msg.imageUrl}
                           alt="Uploaded"
-                          loading="lazy"
                           className="max-w-full md:max-w-md rounded-lg cursor-pointer hover:opacity-90 transition shadow-lg"
                           onClick={() => window.open(msg.imageUrl, '_blank')}
                           onError={(e) => {
+                            console.error('Image load error:', msg.imageUrl);
                             (e.target as HTMLImageElement).style.display = 'none';
                           }}
                         />
@@ -2334,9 +2265,9 @@ const App: React.FC = () => {
                         <img
                           src={msg.gifUrl}
                           alt="GIF"
-                          loading="lazy"
                           className="max-w-full md:max-w-md rounded-lg cursor-pointer shadow-lg"
                           onError={(e) => {
+                            console.error('GIF load error:', msg.gifUrl);
                             (e.target as HTMLImageElement).style.display = 'none';
                           }}
                         />
@@ -2422,7 +2353,7 @@ const App: React.FC = () => {
                     <div className="absolute bottom-full left-0 mb-2 w-48 bg-[#2f3136] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden">
                       {breakTypes.map((breakType) => {
                         const IconComponent = breakType.icon;
-                 return (
+                        return (
                           <button
                             key={breakType.id}
                             onClick={() => handleBreak(breakType)}
@@ -2540,10 +2471,10 @@ const App: React.FC = () => {
                             <div className="font-semibold">{u.username}</div>
                           </div>
                         </button>
-                                ))}
-                            </div>
+                      ))}
+                  </div>
                 )}
-                        </div>
+              </div>
               <button
                 onClick={handleSendMessage}
                 disabled={!inputMessage.trim() || isLoading}
@@ -2555,31 +2486,31 @@ const App: React.FC = () => {
                   <Send size={18} />
                 )}
               </button>
-                             </div>
+                        </div>
                         </div>
                  )}
-                             </div>
-                             
+             </div>
+
       {/* Notification Toast */}
       {notification && (
         <div className="fixed top-4 right-4 modern-card border border-white/10 rounded-lg shadow-2xl p-4 max-w-sm z-50 animate-slideIn">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#5865f2] to-[#eb459e] flex items-center justify-center flex-shrink-0">
               <MessageSquare size={20} className="text-white" />
-                             </div>
+      </div>
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-white mb-1">Yeni Mesaj</div>
               <div className="text-sm text-gray-400 mb-1">{notification.username}</div>
               <div className="text-sm text-gray-300 truncate">{notification.text}</div>
-                        </div>
+            </div>
             <button
               onClick={() => setNotification(null)}
               className="text-gray-400 hover:text-white transition"
             >
               <X size={18} />
             </button>
-                        </div>
-                    </div>
+          </div>
+        </div>
       )}
 
       {/* Emoji Picker */}
@@ -2682,8 +2613,8 @@ const App: React.FC = () => {
                   {emoji}
                 </button>
               ))}
-                        </div>
-                        </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2712,7 +2643,7 @@ const App: React.FC = () => {
                   >
                     <ImageIcon size={14} className="text-white" />
                   </button>
-             </div>
+                </div>
                 <input
                   ref={avatarInputRef}
                   type="file"
@@ -2779,7 +2710,7 @@ const App: React.FC = () => {
                   alt={selectedUserProfile.username}
                   className="w-24 h-24 rounded-full border-4 border-[#2f3136]"
                 />
-      </div>
+              </div>
             </div>
             <div className="pt-16 pb-6 px-6 text-center">
               <h2 className="text-2xl font-bold text-white mb-2">{selectedUserProfile.username}</h2>
