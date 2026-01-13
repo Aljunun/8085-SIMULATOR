@@ -575,11 +575,18 @@ const App: React.FC = () => {
         
         // Always use username from profile if it exists, never use email directly
         if (profile && profile.username && profile.username.trim() !== '') {
-          setUser({
-            username: profile.username,
-            avatar: profile.avatar || firebaseUser.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile.username)}&background=5865f2&color=fff&size=128`,
-            userId: firebaseUser.uid,
-            email: firebaseUser.email || undefined
+          // Only update if user state doesn't already have the correct username
+          // This prevents overwriting username set during signup
+          setUser(prevUser => {
+            if (prevUser && prevUser.userId === firebaseUser.uid && prevUser.username === profile.username) {
+              return prevUser; // Don't update if already correct
+            }
+            return {
+              username: profile.username,
+              avatar: profile.avatar || firebaseUser.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile.username)}&background=5865f2&color=fff&size=128`,
+              userId: firebaseUser.uid,
+              email: firebaseUser.email || undefined
+            };
           });
         } else {
           // If no profile exists or username is empty, use displayName or create from email
@@ -601,11 +608,17 @@ const App: React.FC = () => {
           
           const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(finalUsername)}&background=5865f2&color=fff&size=128`;
           
-          setUser({
-            username: finalUsername,
-            avatar: firebaseUser.photoURL || defaultAvatar,
-            userId: firebaseUser.uid,
-            email: firebaseUser.email || undefined
+          // Only update if user state doesn't already have a username
+          setUser(prevUser => {
+            if (prevUser && prevUser.userId === firebaseUser.uid && prevUser.username && prevUser.username.trim() !== '') {
+              return prevUser; // Don't overwrite existing username
+            }
+            return {
+              username: finalUsername,
+              avatar: firebaseUser.photoURL || defaultAvatar,
+              userId: firebaseUser.uid,
+              email: firebaseUser.email || undefined
+            };
           });
           
           // Save to Firestore if profile doesn't exist or username is missing
@@ -856,7 +869,17 @@ const App: React.FC = () => {
           finalAvatar = avatar;
         }
         
-        await signUp(email.trim(), password, username.trim(), finalAvatar);
+        const firebaseUser = await signUp(email.trim(), password, username.trim(), finalAvatar);
+        
+        // Immediately set user state with the username from signup
+        // This ensures the username is used right away, before auth listener fires
+        setUser({
+          username: username.trim(),
+          avatar: finalAvatar,
+          userId: firebaseUser.uid,
+          email: email.trim()
+        });
+        
         setEmail('');
         setPassword('');
         setUsername('');
