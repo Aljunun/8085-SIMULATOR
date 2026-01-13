@@ -26,26 +26,50 @@ if (typeof window !== 'undefined') {
 }
 
 // Collection references
-const messagesCollection = collection(db, 'messages');
+const channelsCollection = collection(db, 'channels');
+const messagesCollection = (channelId: string) => collection(db, `channels/${channelId}/messages`);
 const usersCollection = collection(db, 'users');
 const coursesCollection = collection(db, 'courses');
 const courseFilesCollection = (courseId: string) => collection(db, `courses/${courseId}/files`);
 
+// Channel functions
+export const createChannel = async (channelData: { name: string; description?: string; createdBy: string; type?: 'text' | 'voice' }) => {
+  return await addDoc(channelsCollection, {
+    ...channelData,
+    type: channelData.type || 'text',
+    createdAt: Date.now()
+  });
+};
+
+export const subscribeToChannels = (callback: (channels: any[]) => void) => {
+  const q = query(channelsCollection, orderBy('createdAt', 'asc'));
+  return onSnapshot(q, (snapshot) => {
+    const channels = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    callback(channels);
+  });
+};
+
 // Message functions
-export const sendMessage = async (message: {
+export const sendMessage = async (channelId: string, message: {
   username: string;
   avatar: string;
   text?: string;
   imageUrl?: string;
   gifUrl?: string;
   timestamp: number;
-  type: 'text' | 'image' | 'gif';
+  type: 'text' | 'image' | 'gif' | 'break';
 }) => {
-  return await addDoc(messagesCollection, message);
+  const channelMessagesRef = messagesCollection(channelId);
+  return await addDoc(channelMessagesRef, message);
 };
 
-export const subscribeToMessages = (callback: (messages: any[]) => void) => {
-  const q = query(messagesCollection, orderBy('timestamp', 'asc'));
+export const subscribeToMessages = (channelId: string, callback: (messages: any[]) => void) => {
+  if (!channelId) return () => {};
+  const channelMessagesRef = messagesCollection(channelId);
+  const q = query(channelMessagesRef, orderBy('timestamp', 'asc'));
   
   return onSnapshot(q, (snapshot) => {
     const messages = snapshot.docs.map(doc => ({
@@ -56,8 +80,10 @@ export const subscribeToMessages = (callback: (messages: any[]) => void) => {
   });
 };
 
-export const clearAllMessages = async () => {
-  const q = query(messagesCollection);
+export const clearAllMessages = async (channelId: string) => {
+  if (!channelId) return;
+  const channelMessagesRef = messagesCollection(channelId);
+  const q = query(channelMessagesRef);
   const snapshot = await getDocs(q);
   const batch = writeBatch(db);
   

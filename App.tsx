@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip, Cigarette, BookOpen, FileText, Plus } from 'lucide-react';
-import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles } from './services/firebase';
+import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip, Cigarette, BookOpen, FileText, Plus, Volume2, Settings, Search, Pin, Edit2, Heart, ThumbsUp, Laugh, Star, Moon, Sun, Bell, BellOff, Users, Crown } from 'lucide-react';
+import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels } from './services/firebase';
 
 interface Message {
   id: string;
@@ -11,12 +11,24 @@ interface Message {
   gifUrl?: string;
   timestamp: number;
   type: 'text' | 'image' | 'gif' | 'break';
+  reactions?: { [emoji: string]: string[] };
+  edited?: boolean;
+  pinned?: boolean;
 }
 
 interface UserData {
   username: string;
   avatar: string;
   userId?: string;
+}
+
+interface Channel {
+  id: string;
+  name: string;
+  description?: string;
+  createdBy: string;
+  createdAt: number;
+  type: 'text' | 'voice';
 }
 
 interface Course {
@@ -188,6 +200,8 @@ const App: React.FC = () => {
   const [username, setUsername] = useState('');
   const [avatar, setAvatar] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showGiphyPicker, setShowGiphyPicker] = useState(false);
@@ -197,12 +211,31 @@ const App: React.FC = () => {
   const [courseFiles, setCourseFiles] = useState<CourseFile[]>([]);
   const [newCourseName, setNewCourseName] = useState('');
   const [showNewCourseInput, setShowNewCourseInput] = useState(false);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [showNewChannelInput, setShowNewChannelInput] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [darkMode, setDarkMode] = useState(true);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const courseFileInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const prevMessagesLengthRef = useRef(0);
+  const typingTimeoutRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({});
+
+  // Subscribe to channels
+  useEffect(() => {
+    const unsubscribe = subscribeToChannels((firebaseChannels) => {
+      setChannels(firebaseChannels);
+      if (firebaseChannels.length > 0 && !selectedChannel) {
+        setSelectedChannel(firebaseChannels[0].id);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Subscribe to courses
   useEffect(() => {
@@ -226,24 +259,21 @@ const App: React.FC = () => {
 
   // Subscribe to Firebase messages
   useEffect(() => {
-    if (!user) return;
+    if (!user || !selectedChannel) return;
 
-    const unsubscribe = subscribeToMessages((firebaseMessages) => {
+    const unsubscribe = subscribeToMessages(selectedChannel, (firebaseMessages) => {
       const prevLength = prevMessagesLengthRef.current;
       setMessages(firebaseMessages);
       
-      // Check if new message arrived from another user
       if (firebaseMessages.length > prevLength && prevLength > 0) {
         const lastMessage = firebaseMessages[firebaseMessages.length - 1];
-        if (lastMessage.username !== user.username) {
-          // Play sound
+        if (lastMessage.username !== user.username && notificationsEnabled) {
           if (lastMessage.type === 'break') {
             playBreakSound();
           } else {
             playNotificationSound();
           }
           
-          // Show notification
           const messageText = lastMessage.type === 'break' 
             ? '🚬 Sigara içme molası!' 
             : lastMessage.text || lastMessage.imageUrl ? '📷 Fotoğraf' : lastMessage.gifUrl ? '🎬 GIF' : '';
@@ -269,7 +299,7 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, selectedChannel, notificationsEnabled]);
 
   // Request notification permission
   useEffect(() => {
@@ -282,6 +312,44 @@ const App: React.FC = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Typing indicator
+  useEffect(() => {
+    if (!inputMessage.trim() || !user) {
+      setTypingUsers(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(user?.username || '');
+        return newSet;
+      });
+      return;
+    }
+
+    setTypingUsers(prev => {
+      const newSet = new Set(prev);
+      if (user) newSet.add(user.username);
+      return newSet;
+    });
+
+    if (typingTimeoutRef.current[user?.username || '']) {
+      clearTimeout(typingTimeoutRef.current[user?.username || '']);
+    }
+
+    if (user?.username) {
+      typingTimeoutRef.current[user.username] = setTimeout(() => {
+        setTypingUsers(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(user.username);
+          return newSet;
+        });
+      }, 3000);
+    }
+
+    return () => {
+      Object.values(typingTimeoutRef.current).forEach(timeout => {
+        if (timeout) clearTimeout(timeout as ReturnType<typeof setTimeout>);
+      });
+    };
+  }, [inputMessage, user]);
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -310,10 +378,26 @@ const App: React.FC = () => {
     }
   };
 
-  const handleBreak = async () => {
-    if (!user) return;
+  const handleCreateChannel = async () => {
+    if (!newChannelName.trim() || !user) return;
     try {
-      await sendMessage({
+      await createChannel({
+        name: newChannelName.trim(),
+        createdBy: user.username,
+        type: 'text'
+      });
+      setNewChannelName('');
+      setShowNewChannelInput(false);
+    } catch (error) {
+      console.error('Error creating channel:', error);
+      alert('Kanal oluşturulurken bir hata oluştu.');
+    }
+  };
+
+  const handleBreak = async () => {
+    if (!user || !selectedChannel) return;
+    try {
+      await sendMessage(selectedChannel, {
         username: user.username,
         avatar: user.avatar,
         text: '🚬 Sigara içme molası!',
@@ -327,11 +411,11 @@ const App: React.FC = () => {
   };
 
   const handleImageUpload = async (file: File) => {
-    if (!user) return;
+    if (!user || !selectedChannel) return;
     setIsLoading(true);
     try {
       const imageUrl = await uploadImage(file);
-      await sendMessage({
+      await sendMessage(selectedChannel, {
         username: user.username,
         avatar: user.avatar,
         imageUrl: imageUrl,
@@ -347,10 +431,10 @@ const App: React.FC = () => {
   };
 
   const handleGifSelect = async (gifUrl: string) => {
-    if (!user) return;
+    if (!user || !selectedChannel) return;
     setIsLoading(true);
     try {
-      await sendMessage({
+      await sendMessage(selectedChannel, {
         username: user.username,
         avatar: user.avatar,
         gifUrl: gifUrl,
@@ -366,10 +450,10 @@ const App: React.FC = () => {
   };
 
   const handleSendMessage = async () => {
-    if (inputMessage.trim() && user) {
+    if (inputMessage.trim() && user && selectedChannel) {
       setIsLoading(true);
       try {
-        await sendMessage({
+        await sendMessage(selectedChannel, {
           username: user.username,
           avatar: user.avatar,
           text: inputMessage.trim(),
@@ -421,9 +505,10 @@ const App: React.FC = () => {
   };
 
   const handleClearChat = async () => {
+    if (!selectedChannel) return;
     if (confirm('Tüm sohbet geçmişini silmek istediğinize emin misiniz?')) {
       try {
-        await clearAllMessages();
+        await clearAllMessages(selectedChannel);
         setMessages([]);
       } catch (error) {
         console.error('Error clearing messages:', error);
@@ -441,14 +526,30 @@ const App: React.FC = () => {
   // Get unique users from messages
   const uniqueUsers = Array.from(
     new Map(messages.map(msg => [msg.username, { username: msg.username, avatar: msg.avatar }])).values()
-  ).filter(u => u.username !== user?.username);
+  ).filter((u) => (u as { username: string; avatar: string }).username !== user?.username) as Array<{ username: string; avatar: string }>;
+
+  // Filter messages by search
+  const filteredMessages = searchQuery.trim()
+    ? messages.filter(msg => 
+        msg.text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        msg.username.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : messages;
 
   // If user not logged in, show inline login
   if (!user) {
     return (
-      <div className="h-screen flex items-center justify-center bg-[#36393f] p-4">
-        <div className="w-full max-w-md bg-[#2f3136] rounded-lg p-6 border border-[#202225]">
-          <h2 className="text-2xl font-bold text-white mb-6 text-center">Kutuphane Chat</h2>
+      <div className="h-screen flex items-center justify-center bg-gradient-to-br from-[#1a1c1f] via-[#2f3136] to-[#36393f] p-4">
+        <div className="w-full max-w-md modern-card rounded-xl p-8 border border-white/10 shadow-2xl">
+          <div className="text-center mb-6">
+            <div className="inline-flex p-4 rounded-2xl bg-gradient-to-br from-[#5865f2]/20 to-[#eb459e]/20 mb-4">
+              <MessageSquare size={48} className="text-white" />
+            </div>
+            <h2 className="text-3xl font-black bg-gradient-to-r from-[#5865f2] to-[#eb459e] bg-clip-text text-transparent mb-2">
+              Kutuphane Chat
+            </h2>
+            <p className="text-gray-400">Kütüphane sohbet platformuna hoş geldiniz</p>
+          </div>
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-semibold text-gray-300 mb-2">
@@ -460,7 +561,7 @@ const App: React.FC = () => {
                 onChange={(e) => setUsername(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
                 placeholder="Kullanıcı adınızı girin"
-                className="w-full px-4 py-3 bg-[#202225] border border-[#202225] rounded text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] transition"
+                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
               />
             </div>
             <div>
@@ -469,11 +570,11 @@ const App: React.FC = () => {
               </label>
               <div className="flex items-center gap-4">
                 {avatar && (
-                  <img src={avatar} alt="Avatar" className="w-16 h-16 rounded-full object-cover" />
+                  <img src={avatar} alt="Avatar" className="w-16 h-16 rounded-full object-cover ring-2 ring-white/10" />
                 )}
                 <button
                   onClick={() => avatarInputRef.current?.click()}
-                  className="px-4 py-2 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded transition"
+                  className="px-4 py-2 bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white rounded-lg transition-all hover:scale-105"
                 >
                   <ImageIcon size={20} className="inline mr-2" />
                   Fotoğraf Seç
@@ -490,7 +591,7 @@ const App: React.FC = () => {
             <button
               onClick={handleLogin}
               disabled={!username.trim()}
-              className="w-full bg-[#5865f2] hover:bg-[#4752c4] text-white py-3 rounded font-semibold disabled:bg-gray-600 disabled:cursor-not-allowed transition"
+              className="w-full bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white py-3 rounded-lg font-bold disabled:bg-gray-600 disabled:cursor-not-allowed transition-all shadow-lg shadow-[#5865f2]/30 hover:scale-105"
             >
               Giriş Yap
             </button>
@@ -501,108 +602,199 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen flex bg-[#36393f] text-white overflow-hidden">
-      {/* Left Sidebar */}
-      <div className={`${sidebarOpen ? 'w-60' : 'w-0'} bg-[#2f3136] flex flex-col transition-all duration-300 overflow-hidden md:flex`}>
-        <div className="h-12 border-b border-[#202225] flex items-center px-4 bg-[#2f3136] flex-shrink-0">
+    <div className={`h-screen flex bg-gradient-to-br ${darkMode ? 'from-[#1a1c1f] via-[#2f3136] to-[#36393f]' : 'from-gray-50 to-gray-100'} text-white overflow-hidden relative`}>
+      {/* Animated Background Elements */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-float"></div>
+        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-float" style={{animationDelay: '1s'}}></div>
+      </div>
+
+      {/* Left Sidebar - Channels */}
+      <div className={`${sidebarOpen ? 'w-60' : 'w-0'} modern-card flex flex-col transition-all duration-300 overflow-hidden md:flex relative z-10`}>
+        <div className="h-14 border-b border-white/10 flex items-center px-4 flex-shrink-0 bg-gradient-to-r from-[#5865f2]/20 to-transparent">
           <div className="flex items-center gap-2">
-            <Hash size={20} className="text-gray-400" />
-            <span className="font-semibold text-white">Kutuphane Chat</span>
-          </div>
-        </div>
-
-        {/* Users List */}
-        <div className="flex-1 overflow-y-auto p-2 min-h-0">
-          <div className="px-2 py-1 text-xs font-semibold text-gray-400 uppercase mb-2">
-            Online — {uniqueUsers.length + 1}
-          </div>
-          <div className="space-y-1">
-            {uniqueUsers.map((u, idx) => (
-              <div
-                key={idx}
-                className="flex items-center gap-3 px-2 py-1.5 rounded hover:bg-[#393c43] cursor-pointer transition group"
-              >
-                <div className="relative">
-                  <img src={u.avatar} alt={u.username} className="w-8 h-8 rounded-full" />
-                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-[#2f3136]"></div>
-                </div>
-                <span className="text-sm text-gray-300 group-hover:text-white transition truncate">
-                  {u.username}
-                </span>
-              </div>
-            ))}
-            <div className="flex items-center gap-3 px-2 py-1.5 rounded bg-[#393c43] mt-2">
-              <div className="relative">
-                <img src={user.avatar} alt={user.username} className="w-8 h-8 rounded-full" />
-                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-[#2f3136]"></div>
-              </div>
-              <span className="text-sm text-white font-medium truncate">{user.username}</span>
+            <div className="p-1.5 rounded-lg bg-gradient-to-br from-[#5865f2] to-[#eb459e] animate-glow">
+              <Hash size={18} className="text-white" />
             </div>
+            <span className="font-bold text-white text-sm tracking-wide">Kutuphane Chat</span>
           </div>
         </div>
 
-        {/* Courses Section */}
-        <div className="border-t border-[#202225] p-2 flex-shrink-0">
-          <div className="flex items-center justify-between mb-2">
-            <div className="px-2 py-1 text-xs font-semibold text-gray-400 uppercase">Dersler</div>
+        {/* Channels List */}
+        <div className="flex-1 overflow-y-auto p-3 min-h-0">
+          <div className="flex items-center justify-between mb-3">
+            <div className="px-2 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+              <div className="w-1 h-4 bg-gradient-to-b from-[#5865f2] to-[#eb459e] rounded-full"></div>
+              Kanallar
+            </div>
             <button
-              onClick={() => setShowNewCourseInput(!showNewCourseInput)}
-              className="p-1 text-gray-400 hover:text-white hover:bg-[#393c43] rounded transition"
+              onClick={() => setShowNewChannelInput(!showNewChannelInput)}
+              className="p-1.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
             >
               <Plus size={16} />
             </button>
           </div>
-          {showNewCourseInput && (
-            <div className="mb-2 flex gap-1">
+          {showNewChannelInput && (
+            <div className="mb-3 flex gap-2">
               <input
                 type="text"
-                value={newCourseName}
-                onChange={(e) => setNewCourseName(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleCreateCourse()}
-                placeholder="Ders adı"
-                className="flex-1 px-2 py-1 text-sm bg-[#202225] border border-[#202225] rounded text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] transition"
+                value={newChannelName}
+                onChange={(e) => setNewChannelName(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleCreateChannel()}
+                placeholder="Kanal adı"
+                className="flex-1 px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
               />
               <button
-                onClick={handleCreateCourse}
-                className="px-2 py-1 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded text-sm transition"
+                onClick={handleCreateChannel}
+                className="px-4 py-2 bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white rounded-lg text-sm font-semibold transition-all hover:scale-105 shadow-lg shadow-[#5865f2]/30"
               >
                 Ekle
               </button>
             </div>
           )}
-          <div className="space-y-1 max-h-32 overflow-y-auto">
-            {courses.map((course) => (
+          <div className="space-y-1">
+            {channels.map((channel) => (
               <div
-                key={course.id}
-                onClick={() => setSelectedCourse(course.id)}
-                className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition ${
-                  selectedCourse === course.id ? 'bg-[#5865f2]' : 'hover:bg-[#393c43]'
+                key={channel.id}
+                onClick={() => setSelectedChannel(channel.id)}
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all hover-glow ${
+                  selectedChannel === channel.id 
+                    ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] shadow-lg shadow-[#5865f2]/30' 
+                    : 'hover:bg-white/5'
                 }`}
               >
-                <BookOpen size={16} className="text-gray-400" />
-                <span className="text-sm text-gray-300 truncate">{course.name}</span>
+                {channel.type === 'text' ? (
+                  <Hash size={16} className={selectedChannel === channel.id ? 'text-white' : 'text-gray-400'} />
+                ) : (
+                  <Volume2 size={16} className={selectedChannel === channel.id ? 'text-white' : 'text-gray-400'} />
+                )}
+                <span className={`text-sm truncate font-medium ${selectedChannel === channel.id ? 'text-white' : 'text-gray-300'}`}>
+                  {channel.name}
+                </span>
               </div>
             ))}
+          </div>
+
+          {/* Users List */}
+          <div className="mt-6 pt-6 border-t border-white/10">
+            <div className="px-2 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <div className="w-1 h-4 bg-gradient-to-b from-[#5865f2] to-[#eb459e] rounded-full"></div>
+              Online — {uniqueUsers.length + 1}
+            </div>
+            <div className="space-y-1.5">
+              {uniqueUsers.map((u, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 cursor-pointer transition-all group hover-glow"
+                >
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-0 group-hover:opacity-50 transition-opacity"></div>
+                    <img src={u.avatar} alt={u.username} className="w-9 h-9 rounded-full relative z-10 ring-2 ring-white/10 group-hover:ring-[#5865f2]/50 transition-all" />
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-[#2f3136] shadow-lg shadow-green-500/50"></div>
+                  </div>
+                  <span className="text-sm text-gray-300 group-hover:text-white font-medium transition truncate">
+                    {u.username}
+                  </span>
+                </div>
+              ))}
+              <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gradient-to-r from-[#5865f2]/20 to-[#eb459e]/20 border border-[#5865f2]/30 mt-2">
+                <div className="relative">
+                  <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-30"></div>
+                  <img src={user.avatar} alt={user.username} className="w-9 h-9 rounded-full relative z-10 ring-2 ring-[#5865f2]/50" />
+                  <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-[#2f3136] shadow-lg shadow-green-500/50"></div>
+                </div>
+                <span className="text-sm text-white font-bold truncate">{user.username}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Courses Section */}
+          <div className="mt-6 pt-6 border-t border-white/10">
+            <div className="flex items-center justify-between mb-3">
+              <div className="px-2 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                <div className="w-1 h-4 bg-gradient-to-b from-[#5865f2] to-[#eb459e] rounded-full"></div>
+                Dersler
+              </div>
+              <button
+                onClick={() => setShowNewCourseInput(!showNewCourseInput)}
+                className="p-1.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+            {showNewCourseInput && (
+              <div className="mb-3 flex gap-2">
+                <input
+                  type="text"
+                  value={newCourseName}
+                  onChange={(e) => setNewCourseName(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleCreateCourse()}
+                  placeholder="Ders adı"
+                  className="flex-1 px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
+                />
+                <button
+                  onClick={handleCreateCourse}
+                  className="px-4 py-2 bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white rounded-lg text-sm font-semibold transition-all hover:scale-105 shadow-lg shadow-[#5865f2]/30"
+                >
+                  Ekle
+                </button>
+              </div>
+            )}
+            <div className="space-y-1.5 max-h-32 overflow-y-auto">
+              {courses.map((course) => (
+                <div
+                  key={course.id}
+                  onClick={() => setSelectedCourse(course.id)}
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all hover-glow ${
+                    selectedCourse === course.id 
+                      ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] shadow-lg shadow-[#5865f2]/30' 
+                      : 'hover:bg-white/5'
+                  }`}
+                >
+                  <BookOpen size={16} className={selectedCourse === course.id ? 'text-white' : 'text-gray-400'} />
+                  <span className={`text-sm truncate font-medium ${selectedCourse === course.id ? 'text-white' : 'text-gray-300'}`}>
+                    {course.name}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
         {/* User Footer */}
-        <div className="h-14 bg-[#292b2f] border-t border-[#202225] flex items-center justify-between px-2 flex-shrink-0">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <img src={user.avatar} alt={user.username} className="w-8 h-8 rounded-full flex-shrink-0" />
-            <span className="text-sm font-medium text-white truncate">{user.username}</span>
+        <div className="h-16 bg-gradient-to-t from-black/40 to-transparent border-t border-white/10 flex items-center justify-between px-3 flex-shrink-0 backdrop-blur-sm">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-30"></div>
+              <img src={user.avatar} alt={user.username} className="w-10 h-10 rounded-full flex-shrink-0 relative z-10 ring-2 ring-white/10" />
+            </div>
+            <span className="text-sm font-bold text-white truncate">{user.username}</span>
           </div>
           <div className="flex gap-1">
             <button
+              onClick={() => setDarkMode(!darkMode)}
+              className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
+              title={darkMode ? 'Açık Tema' : 'Koyu Tema'}
+            >
+              {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
+              onClick={() => setNotificationsEnabled(!notificationsEnabled)}
+              className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
+              title={notificationsEnabled ? 'Bildirimleri Kapat' : 'Bildirimleri Aç'}
+            >
+              {notificationsEnabled ? <Bell size={18} /> : <BellOff size={18} />}
+            </button>
+            <button
               onClick={handleClearChat}
-              className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-[#393c43] rounded transition"
+              className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all hover:scale-110"
               title="Sohbeti Temizle"
             >
               <Trash2 size={18} />
             </button>
             <button
               onClick={handleLogout}
-              className="p-1.5 text-gray-400 hover:text-white hover:bg-[#393c43] rounded transition"
+              className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
               title="Çıkış"
             >
               <LogOut size={18} />
@@ -613,9 +805,9 @@ const App: React.FC = () => {
 
       {/* Right Sidebar - Courses & Files */}
       {selectedCourse && (
-        <div className="w-64 bg-[#2f3136] border-l border-[#202225] flex flex-col md:flex">
-          <div className="h-12 border-b border-[#202225] flex items-center justify-between px-4 flex-shrink-0">
-            <span className="font-semibold text-white text-sm truncate">
+        <div className="w-64 modern-card border-l border-white/10 flex flex-col md:flex relative z-10">
+          <div className="h-14 border-b border-white/10 flex items-center justify-between px-4 flex-shrink-0 bg-gradient-to-r from-[#5865f2]/20 to-transparent">
+            <span className="font-bold text-white text-sm truncate">
               {courses.find(c => c.id === selectedCourse)?.name}
             </span>
             <button
@@ -628,7 +820,7 @@ const App: React.FC = () => {
           <div className="flex-1 overflow-y-auto p-4">
             <button
               onClick={() => courseFileInputRef.current?.click()}
-              className="w-full mb-4 px-4 py-2 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded text-sm font-medium transition flex items-center justify-center gap-2"
+              className="w-full mb-4 px-4 py-2 bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white rounded-lg text-sm font-semibold transition-all hover:scale-105 shadow-lg shadow-[#5865f2]/30 flex items-center justify-center gap-2"
             >
               <FileText size={16} />
               PDF/Dosya Yükle
@@ -650,12 +842,12 @@ const App: React.FC = () => {
                   href={file.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block p-3 bg-[#202225] rounded hover:bg-[#393c43] transition"
+                  className="block p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-all hover-glow"
                 >
                   <div className="flex items-center gap-2">
                     <FileText size={16} className="text-gray-400 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm text-white truncate">{file.name}</div>
+                      <div className="text-sm text-white truncate font-medium">{file.name}</div>
                       <div className="text-xs text-gray-400">{file.uploadedBy}</div>
                     </div>
                   </div>
@@ -667,63 +859,149 @@ const App: React.FC = () => {
       )}
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col bg-[#36393f] min-w-0">
+      <div className="flex-1 flex flex-col bg-gradient-to-br from-[#36393f]/50 to-[#2f3136]/50 backdrop-blur-sm min-w-0 relative z-10">
         {/* Mobile Header */}
-        <div className="h-12 border-b border-[#202225] flex items-center justify-between px-4 bg-[#36393f] md:hidden flex-shrink-0">
+        <div className="h-14 border-b border-white/10 flex items-center justify-between px-4 glass-effect md:hidden flex-shrink-0">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="text-gray-400 hover:text-white"
+            className="text-gray-400 hover:text-white transition-all hover:scale-110"
           >
             <Hash size={20} />
           </button>
-          <span className="font-semibold text-white">Kutuphane Chat</span>
-          {selectedCourse && (
+          <span className="font-bold text-white tracking-wide">
+            {channels.find(c => c.id === selectedChannel)?.name || 'Kanal Seç'}
+          </span>
+          <div className="flex gap-2">
             <button
-              onClick={() => setSelectedCourse(null)}
-              className="text-gray-400 hover:text-white"
+              onClick={() => setShowSearch(!showSearch)}
+              className="text-gray-400 hover:text-white transition-all"
             >
-              <X size={20} />
+              <Search size={20} />
             </button>
-          )}
+            {selectedCourse && (
+              <button
+                onClick={() => setSelectedCourse(null)}
+                className="text-gray-400 hover:text-white transition-all"
+              >
+                <X size={20} />
+              </button>
+            )}
+          </div>
         </div>
 
+        {/* Channel Header */}
+        {selectedChannel && (
+          <div className="h-14 border-b border-white/10 flex items-center justify-between px-6 glass-effect flex-shrink-0 hidden md:flex">
+            <div className="flex items-center gap-3">
+              <Hash size={20} className="text-gray-400" />
+              <span className="font-bold text-white text-lg">
+                {channels.find(c => c.id === selectedChannel)?.name}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowSearch(!showSearch)}
+                className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+                title="Ara"
+              >
+                <Search size={18} />
+              </button>
+              <button
+                onClick={handleClearChat}
+                className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                title="Sohbeti Temizle"
+              >
+                <Trash2 size={18} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Search Bar */}
+        {showSearch && (
+          <div className="px-4 py-3 border-b border-white/10 glass-effect flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <Search size={18} className="text-gray-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Mesajlarda ara..."
+                className="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm text-sm"
+              />
+              <button
+                onClick={() => {
+                  setShowSearch(false);
+                  setSearchQuery('');
+                }}
+                className="p-2 text-gray-400 hover:text-white transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-4 min-h-0">
-          {messages.length === 0 ? (
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 min-h-0">
+          {!selectedChannel ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
-                <MessageSquare size={64} className="text-gray-500 mx-auto mb-4" />
-                <p className="text-xl font-semibold text-gray-400">Henüz mesaj yok</p>
-                <p className="text-sm text-gray-500 mt-2">İlk mesajınızı göndererek sohbete başlayın!</p>
+                <div className="inline-flex p-4 rounded-2xl bg-gradient-to-br from-[#5865f2]/20 to-[#eb459e]/20 mb-4">
+                  <Hash size={48} className="text-gray-400" />
+                </div>
+                <p className="text-xl font-bold text-gray-300 mb-2">Kanal Seç</p>
+                <p className="text-sm text-gray-500">Bir kanal seçin veya yeni kanal oluşturun</p>
+              </div>
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <div className="inline-flex p-4 rounded-2xl bg-gradient-to-br from-[#5865f2]/20 to-[#eb459e]/20 mb-4">
+                  <MessageSquare size={48} className="text-gray-400" />
+                </div>
+                <p className="text-xl font-bold text-gray-300 mb-2">Henüz mesaj yok</p>
+                <p className="text-sm text-gray-500">İlk mesajınızı göndererek sohbete başlayın!</p>
               </div>
             </div>
           ) : (
-            <div className="space-y-4">
-              {messages.map((msg) => (
+            <div className="space-y-3">
+              {filteredMessages.map((msg) => (
                 <div
                   key={msg.id}
-                  className={`flex gap-4 group hover:bg-[#32353b] px-4 py-1 -mx-4 rounded transition ${
-                    msg.username === user?.username ? 'bg-[#32353b]/50' : ''
-                  } ${msg.type === 'break' ? 'bg-yellow-500/10 border-l-4 border-yellow-500' : ''}`}
+                  className={`flex gap-4 group hover:bg-white/5 px-4 py-2 -mx-4 rounded-xl transition-all ${
+                    msg.username === user?.username ? 'bg-[#5865f2]/10' : ''
+                  } ${msg.type === 'break' ? 'bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-l-4 border-yellow-500 shadow-lg shadow-yellow-500/20' : ''}`}
                 >
-                  <img
-                    src={msg.avatar}
-                    alt={msg.username}
-                    className="w-10 h-10 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 ring-[#5865f2] transition"
-                  />
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-0 group-hover:opacity-30 transition-opacity"></div>
+                    <img
+                      src={msg.avatar}
+                      alt={msg.username}
+                      className="w-11 h-11 rounded-full flex-shrink-0 cursor-pointer ring-2 ring-white/10 group-hover:ring-[#5865f2]/50 transition-all relative z-10"
+                    />
+                  </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline gap-2 mb-1">
-                      <span className={`font-semibold text-sm ${
-                        msg.username === user?.username ? 'text-[#5865f2]' : 'text-white'
+                    <div className="flex items-baseline gap-2.5 mb-1.5">
+                      <span className={`font-bold text-sm ${
+                        msg.username === user?.username 
+                          ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] bg-clip-text text-transparent' 
+                          : 'text-white'
                       }`}>
                         {msg.username === user?.username ? 'Sen' : msg.username}
                       </span>
-                      <span className="text-xs text-gray-400">
+                      <span className="text-xs text-gray-500">
                         {new Date(msg.timestamp).toLocaleTimeString('tr-TR', {
                           hour: '2-digit',
                           minute: '2-digit'
                         })}
                       </span>
+                      {msg.edited && (
+                        <span className="text-xs text-gray-500 italic">(düzenlendi)</span>
+                      )}
+                      {msg.pinned && (
+                        <Pin size={12} className="text-yellow-400" />
+                      )}
                     </div>
                     {msg.type === 'image' && msg.imageUrl && (
                       <div className="mb-2">
@@ -747,82 +1025,113 @@ const App: React.FC = () => {
                     {msg.text && (
                       <div className="text-gray-300 text-sm break-words">{msg.text}</div>
                     )}
+                    {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                      <div className="flex gap-1 mt-2">
+                        {Object.entries(msg.reactions).map(([emoji, users]) => {
+                          const userList = Array.isArray(users) ? users : [];
+                          return (
+                            <button
+                              key={emoji}
+                              className="px-2 py-1 bg-white/5 hover:bg-white/10 rounded flex items-center gap-1 text-xs transition"
+                            >
+                              <span>{emoji}</span>
+                              <span className="text-gray-400">{userList.length}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
               <div ref={messagesEndRef} />
             </div>
           )}
+
+          {/* Typing Indicator */}
+          {typingUsers.size > 0 && (
+            <div className="px-4 py-2 text-sm text-gray-400 italic">
+              {Array.from(typingUsers).join(', ')} yazıyor...
+            </div>
+          )}
         </div>
 
         {/* Input Area */}
-        <div className="p-2 md:p-4 bg-[#36393f] border-t border-[#202225] flex-shrink-0">
-          <div className="flex gap-2">
-            <div className="flex gap-1">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading}
-                className="p-2 text-gray-400 hover:text-white hover:bg-[#40444b] rounded transition disabled:opacity-50"
-                title="Fotoğraf Yükle"
-              >
-                <Paperclip size={18} />
-              </button>
-              <button
-                onClick={() => setShowGiphyPicker(true)}
-                disabled={isLoading}
-                className="p-2 text-gray-400 hover:text-white hover:bg-[#40444b] rounded transition disabled:opacity-50"
-                title="GIF Gönder"
-              >
-                <Smile size={18} />
-              </button>
-              <button
-                onClick={handleBreak}
-                disabled={isLoading}
-                className="p-2 text-orange-400 hover:text-orange-300 hover:bg-[#40444b] rounded transition disabled:opacity-50"
-                title="Sigara İçme Molası"
-              >
-                <Cigarette size={18} />
-              </button>
+        {selectedChannel && (
+          <div className="p-3 md:p-4 glass-effect border-t border-white/10 flex-shrink-0">
+            <div className="flex gap-2">
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isLoading}
+                  className="p-2.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all disabled:opacity-50 hover:scale-110"
+                  title="Fotoğraf Yükle"
+                >
+                  <Paperclip size={18} />
+                </button>
+                <button
+                  onClick={() => setShowGiphyPicker(true)}
+                  disabled={isLoading}
+                  className="px-3 py-2 text-xs font-bold bg-gradient-to-r from-pink-500 via-purple-500 via-blue-500 to-green-500 bg-clip-text text-transparent hover:from-pink-400 hover:via-purple-400 hover:via-blue-400 hover:to-green-400 hover:bg-white/5 rounded-lg transition disabled:opacity-50 relative overflow-hidden group"
+                  title="GIF Gönder"
+                  style={{
+                    backgroundSize: '200% 200%',
+                    animation: 'rainbow 3s ease infinite'
+                  }}
+                >
+                  <span className="relative z-10">rainbow gif</span>
+                  <div className="absolute inset-0 bg-gradient-to-r from-pink-500/20 via-purple-500/20 via-blue-500/20 to-green-500/20 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                </button>
+                <button
+                  onClick={handleBreak}
+                  disabled={isLoading}
+                  className="px-3 py-2 text-orange-400 hover:text-orange-300 hover:bg-orange-500/10 rounded-lg transition-all disabled:opacity-50 hover:scale-110 font-semibold text-xs flex items-center gap-1.5 border border-orange-500/30 hover:border-orange-500/50"
+                  title="Sigara İçme Molası"
+                >
+                  <Cigarette size={16} />
+                  <span className="hidden md:inline">Mola</span>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleImageUpload(file);
+                  }}
+                  className="hidden"
+                />
+              </div>
               <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleImageUpload(file);
-                }}
-                className="hidden"
+                type="text"
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSendMessage()}
+                placeholder={`#${channels.find(c => c.id === selectedChannel)?.name || 'kanal'} kanalında mesaj gönder`}
+                disabled={isLoading}
+                className="flex-1 px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition disabled:opacity-50 text-sm md:text-base backdrop-blur-sm"
               />
+              <button
+                onClick={handleSendMessage}
+                disabled={!inputMessage.trim() || isLoading}
+                className="px-5 md:px-6 py-2.5 bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white rounded-lg font-semibold disabled:bg-gray-600 disabled:cursor-not-allowed transition-all flex items-center gap-2 shadow-lg shadow-[#5865f2]/30 hover:scale-105 disabled:hover:scale-100"
+              >
+                {isLoading ? (
+                  <div className="w-4 h-4 md:w-5 md:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                ) : (
+                  <Send size={18} />
+                )}
+              </button>
             </div>
-            <input
-              type="text"
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSendMessage()}
-              placeholder="Mesaj gönder..."
-              disabled={isLoading}
-              className="flex-1 px-4 py-2 bg-[#40444b] border border-[#202225] rounded text-white placeholder-gray-500 focus:outline-none focus:border-transparent transition disabled:opacity-50 text-sm md:text-base"
-            />
-            <button
-              onClick={handleSendMessage}
-              disabled={!inputMessage.trim() || isLoading}
-              className="px-4 md:px-6 py-2.5 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded font-medium disabled:bg-gray-600 disabled:cursor-not-allowed transition flex items-center gap-2"
-            >
-              {isLoading ? (
-                <div className="w-4 h-4 md:w-5 md:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-              ) : (
-                <Send size={18} />
-              )}
-            </button>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Notification Toast */}
       {notification && (
-        <div className="fixed top-4 right-4 bg-[#2f3136] border border-[#202225] rounded-lg shadow-2xl p-4 max-w-sm z-50 animate-slideIn">
+        <div className="fixed top-4 right-4 modern-card border border-white/10 rounded-lg shadow-2xl p-4 max-w-sm z-50 animate-slideIn">
           <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-full bg-[#5865f2] flex items-center justify-center flex-shrink-0">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#5865f2] to-[#eb459e] flex items-center justify-center flex-shrink-0">
               <MessageSquare size={20} className="text-white" />
             </div>
             <div className="flex-1 min-w-0">
@@ -859,8 +1168,49 @@ const App: React.FC = () => {
             transform: translateX(0);
           }
         }
+        @keyframes rainbow {
+          0%, 100% {
+            background-position: 0% 50%;
+          }
+          50% {
+            background-position: 100% 50%;
+          }
+        }
+        @keyframes glow {
+          0%, 100% {
+            box-shadow: 0 0 5px rgba(88, 101, 242, 0.5);
+          }
+          50% {
+            box-shadow: 0 0 20px rgba(88, 101, 242, 0.8), 0 0 30px rgba(88, 101, 242, 0.6);
+          }
+        }
+        @keyframes float {
+          0%, 100% {
+            transform: translateY(0px);
+          }
+          50% {
+            transform: translateY(-5px);
+          }
+        }
         .animate-slideIn {
           animation: slideIn 0.3s ease-out;
+        }
+        .glass-effect {
+          background: rgba(47, 49, 54, 0.8);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+        }
+        .modern-card {
+          background: linear-gradient(135deg, rgba(47, 49, 54, 0.9) 0%, rgba(54, 57, 63, 0.9) 100%);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        .hover-glow:hover {
+          box-shadow: 0 0 15px rgba(88, 101, 242, 0.4);
+          transform: translateY(-2px);
+          transition: all 0.3s ease;
         }
         @media (max-width: 768px) {
           .md\\:flex {
