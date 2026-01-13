@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip, Cigarette, BookOpen, FileText, Plus, Volume2, Settings, Search, Pin, Edit2, Heart, ThumbsUp, Laugh, Star, Moon, Sun, Bell, BellOff, Users, Crown } from 'lucide-react';
-import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels } from './services/firebase';
+import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip, Cigarette, BookOpen, FileText, Plus, Volume2, Settings, Search, Pin, Edit2, Heart, ThumbsUp, Laugh, Star, Moon, Sun, Bell, BellOff, Users, Crown, PenTool, Eraser, Palette, Minus, Maximize } from 'lucide-react';
+import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels, addWhiteboardStroke, subscribeToWhiteboard, clearWhiteboard } from './services/firebase';
 
 interface Message {
   id: string;
@@ -28,7 +28,17 @@ interface Channel {
   description?: string;
   createdBy: string;
   createdAt: number;
-  type: 'text' | 'voice';
+  type: 'text' | 'voice' | 'whiteboard';
+}
+
+interface WhiteboardStroke {
+  id: string;
+  points: Array<{ x: number; y: number }>;
+  color: string;
+  lineWidth: number;
+  tool: 'pen' | 'eraser';
+  username: string;
+  timestamp: number;
 }
 
 interface Course {
@@ -96,6 +106,269 @@ const playNotificationSound = () => {
 
 // GIPHY API Key
 const GIPHY_API_KEY = 'GlVGYHkr3WSBnllca54iNt0yFbjz7L65';
+
+// Whiteboard Component
+const Whiteboard: React.FC<{
+  channelId: string;
+  user: UserData;
+  strokes: WhiteboardStroke[];
+}> = ({ channelId, user, strokes }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [currentTool, setCurrentTool] = useState<'pen' | 'eraser'>('pen');
+  const [currentColor, setCurrentColor] = useState('#ffffff');
+  const [lineWidth, setLineWidth] = useState(3);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
+  const currentStrokeRef = useRef<Array<{ x: number; y: number }>>([]);
+
+  const colors = ['#ffffff', '#000000', '#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
+
+  // Draw all strokes on canvas
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const updateCanvas = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      
+      // Set actual canvas size
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      
+      // Scale context for high DPI displays
+      ctx.scale(dpr, dpr);
+      
+      // Set display size
+      canvas.style.width = `${rect.width}px`;
+      canvas.style.height = `${rect.height}px`;
+
+      // Clear canvas
+      ctx.fillStyle = '#1a1c1f';
+      ctx.fillRect(0, 0, rect.width, rect.height);
+
+      // Draw all strokes
+      strokes.forEach((stroke) => {
+        if (stroke.points.length < 2) return;
+
+        ctx.beginPath();
+        ctx.strokeStyle = stroke.tool === 'eraser' ? '#1a1c1f' : stroke.color;
+        ctx.lineWidth = stroke.lineWidth;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+        for (let i = 1; i < stroke.points.length; i++) {
+          ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+        }
+        ctx.stroke();
+      });
+    };
+
+    updateCanvas();
+
+    const handleResize = () => {
+      updateCanvas();
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [strokes]);
+
+  const getPointFromEvent = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0]?.clientY : e.clientY;
+
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top
+    };
+  };
+
+  const startDrawing = (point: { x: number; y: number }) => {
+    setIsDrawing(true);
+    lastPointRef.current = point;
+    currentStrokeRef.current = [point];
+  };
+
+  const draw = (point: { x: number; y: number }) => {
+    if (!isDrawing || !lastPointRef.current) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.beginPath();
+    ctx.strokeStyle = currentTool === 'eraser' ? '#1a1c1f' : currentColor;
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+
+    currentStrokeRef.current.push(point);
+    lastPointRef.current = point;
+  };
+
+  const stopDrawing = async () => {
+    if (!isDrawing || currentStrokeRef.current.length === 0) return;
+
+    setIsDrawing(false);
+
+    // Save stroke to Firebase
+    try {
+      await addWhiteboardStroke(channelId, {
+        points: [...currentStrokeRef.current],
+        color: currentColor,
+        lineWidth: lineWidth,
+        tool: currentTool,
+        username: user.username,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      console.error('Error saving stroke:', error);
+    }
+
+    currentStrokeRef.current = [];
+    lastPointRef.current = null;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const point = getPointFromEvent(e);
+    if (point) startDrawing(point);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const point = getPointFromEvent(e);
+    if (point) draw(point);
+  };
+
+  const handleMouseUp = () => {
+    stopDrawing();
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const point = getPointFromEvent(e);
+    if (point) startDrawing(point);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const point = getPointFromEvent(e);
+    if (point) draw(point);
+  };
+
+  const handleTouchEnd = () => {
+    stopDrawing();
+  };
+
+  const handleClear = async () => {
+    if (confirm('Whiteboard\'u temizlemek istediğinize emin misiniz?')) {
+      try {
+        await clearWhiteboard(channelId);
+      } catch (error) {
+        console.error('Error clearing whiteboard:', error);
+      }
+    }
+  };
+
+  return (
+    <div className={`flex flex-col h-full ${isFullscreen ? 'fixed inset-0 z-50 bg-[#1a1c1f]' : ''}`}>
+      {/* Toolbar */}
+      <div className="flex items-center justify-between p-3 bg-[#2f3136] border-b border-white/10 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setCurrentTool('pen')}
+            className={`p-2 rounded-lg transition-all ${currentTool === 'pen' ? 'bg-[#5865f2] text-white' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+            title="Kalem"
+          >
+            <PenTool size={20} />
+          </button>
+          <button
+            onClick={() => setCurrentTool('eraser')}
+            className={`p-2 rounded-lg transition-all ${currentTool === 'eraser' ? 'bg-[#5865f2] text-white' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+            title="Silgi"
+          >
+            <Eraser size={20} />
+          </button>
+          <div className="w-px h-6 bg-white/10 mx-1"></div>
+          <div className="flex items-center gap-1">
+            {colors.map((color) => (
+              <button
+                key={color}
+                onClick={() => setCurrentColor(color)}
+                className={`w-8 h-8 rounded-lg border-2 transition-all ${
+                  currentColor === color ? 'border-white scale-110' : 'border-transparent hover:scale-105'
+                }`}
+                style={{ backgroundColor: color }}
+                title={color}
+              />
+            ))}
+          </div>
+          <div className="w-px h-6 bg-white/10 mx-1"></div>
+          <div className="flex items-center gap-2">
+            <Minus size={16} className="text-gray-400" />
+            <input
+              type="range"
+              min="1"
+              max="20"
+              value={lineWidth}
+              onChange={(e) => setLineWidth(Number(e.target.value))}
+              className="w-24"
+            />
+            <Plus size={16} className="text-gray-400" />
+            <span className="text-xs text-gray-400 w-8 text-center">{lineWidth}px</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsFullscreen(!isFullscreen)}
+            className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+            title={isFullscreen ? 'Küçült' : 'Tam Ekran'}
+          >
+            {isFullscreen ? <Minus size={20} /> : <Maximize size={20} />}
+          </button>
+          <button
+            onClick={handleClear}
+            className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+            title="Temizle"
+          >
+            <Trash2 size={20} />
+          </button>
+        </div>
+      </div>
+
+      {/* Canvas */}
+      <div className="flex-1 relative overflow-hidden bg-[#1a1c1f]">
+        <canvas
+          ref={canvasRef}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          className="absolute inset-0 w-full h-full cursor-crosshair"
+          style={{ touchAction: 'none' }}
+        />
+      </div>
+    </div>
+  );
+};
 
 // GIPHY Search Component
 const GiphyPicker: React.FC<{
@@ -219,6 +492,8 @@ const App: React.FC = () => {
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
+  const [whiteboardStrokes, setWhiteboardStrokes] = useState<WhiteboardStroke[]>([]);
+  const [newChannelType, setNewChannelType] = useState<'text' | 'whiteboard'>('text');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const courseFileInputRef = useRef<HTMLInputElement>(null);
@@ -257,9 +532,29 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, [selectedCourse]);
 
+  // Subscribe to whiteboard strokes
+  useEffect(() => {
+    if (!selectedChannel) {
+      setWhiteboardStrokes([]);
+      return;
+    }
+    const selectedChannelData = channels.find(c => c.id === selectedChannel);
+    if (selectedChannelData?.type !== 'whiteboard') {
+      setWhiteboardStrokes([]);
+      return;
+    }
+
+    const unsubscribe = subscribeToWhiteboard(selectedChannel, (strokes) => {
+      setWhiteboardStrokes(strokes as WhiteboardStroke[]);
+    });
+    return () => unsubscribe();
+  }, [selectedChannel, channels]);
+
   // Subscribe to Firebase messages
   useEffect(() => {
     if (!user || !selectedChannel) return;
+    const selectedChannelData = channels.find(c => c.id === selectedChannel);
+    if (selectedChannelData?.type === 'whiteboard') return; // Skip messages for whiteboard channels
 
     const unsubscribe = subscribeToMessages(selectedChannel, (firebaseMessages) => {
       const prevLength = prevMessagesLengthRef.current;
@@ -384,9 +679,10 @@ const App: React.FC = () => {
       await createChannel({
         name: newChannelName.trim(),
         createdBy: user.username,
-        type: 'text'
+        type: newChannelType
       });
       setNewChannelName('');
+      setNewChannelType('text');
       setShowNewChannelInput(false);
     } catch (error) {
       console.error('Error creating channel:', error);
@@ -635,18 +931,42 @@ const App: React.FC = () => {
             </button>
           </div>
           {showNewChannelInput && (
-            <div className="mb-3 flex gap-2">
+            <div className="mb-3 space-y-2">
               <input
                 type="text"
                 value={newChannelName}
                 onChange={(e) => setNewChannelName(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleCreateChannel()}
                 placeholder="Kanal adı"
-                className="flex-1 px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
+                className="w-full px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
               />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setNewChannelType('text')}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
+                    newChannelType === 'text'
+                      ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] text-white shadow-lg shadow-[#5865f2]/30'
+                      : 'bg-white/5 text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <Hash size={14} className="inline mr-1" />
+                  Metin
+                </button>
+                <button
+                  onClick={() => setNewChannelType('whiteboard')}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
+                    newChannelType === 'whiteboard'
+                      ? 'bg-gradient-to-r from-[#5865f2] to-[#eb459e] text-white shadow-lg shadow-[#5865f2]/30'
+                      : 'bg-white/5 text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <PenTool size={14} className="inline mr-1" />
+                  Whiteboard
+                </button>
+              </div>
               <button
                 onClick={handleCreateChannel}
-                className="px-4 py-2 bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white rounded-lg text-sm font-semibold transition-all hover:scale-105 shadow-lg shadow-[#5865f2]/30"
+                className="w-full px-4 py-2 bg-gradient-to-r from-[#5865f2] to-[#eb459e] hover:from-[#4752c4] hover:to-[#d1358a] text-white rounded-lg text-sm font-semibold transition-all hover:scale-105 shadow-lg shadow-[#5865f2]/30"
               >
                 Ekle
               </button>
@@ -665,6 +985,8 @@ const App: React.FC = () => {
               >
                 {channel.type === 'text' ? (
                   <Hash size={16} className={selectedChannel === channel.id ? 'text-white' : 'text-gray-400'} />
+                ) : channel.type === 'whiteboard' ? (
+                  <PenTool size={16} className={selectedChannel === channel.id ? 'text-white' : 'text-gray-400'} />
                 ) : (
                   <Volume2 size={16} className={selectedChannel === channel.id ? 'text-white' : 'text-gray-400'} />
                 )}
@@ -812,9 +1134,10 @@ const App: React.FC = () => {
             </span>
             <button
               onClick={() => setSelectedCourse(null)}
-              className="text-gray-400 hover:text-white transition md:hidden"
+              className="p-1.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all hover:scale-110"
+              title="Kapat"
             >
-              <X size={20} />
+              <X size={18} />
             </button>
           </div>
           <div className="flex-1 overflow-y-auto p-4">
@@ -942,19 +1265,35 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 min-h-0">
-          {!selectedChannel ? (
+        {/* Messages Area / Whiteboard */}
+        {selectedChannel && channels.find(c => c.id === selectedChannel)?.type === 'whiteboard' ? (
+          user ? (
+            <Whiteboard
+              channelId={selectedChannel}
+              user={user}
+              strokes={whiteboardStrokes}
+            />
+          ) : (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
-                <div className="inline-flex p-4 rounded-2xl bg-gradient-to-br from-[#5865f2]/20 to-[#eb459e]/20 mb-4">
-                  <Hash size={48} className="text-gray-400" />
-                </div>
-                <p className="text-xl font-bold text-gray-300 mb-2">Kanal Seç</p>
-                <p className="text-sm text-gray-500">Bir kanal seçin veya yeni kanal oluşturun</p>
+                <p className="text-xl font-bold text-gray-300 mb-2">Giriş Yapın</p>
+                <p className="text-sm text-gray-500">Whiteboard kullanmak için giriş yapmalısınız</p>
               </div>
             </div>
-          ) : messages.length === 0 ? (
+          )
+        ) : (
+          <div className="flex-1 overflow-y-auto p-4 md:p-6 min-h-0">
+            {!selectedChannel ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center">
+                  <div className="inline-flex p-4 rounded-2xl bg-gradient-to-br from-[#5865f2]/20 to-[#eb459e]/20 mb-4">
+                    <Hash size={48} className="text-gray-400" />
+                  </div>
+                  <p className="text-xl font-bold text-gray-300 mb-2">Kanal Seç</p>
+                  <p className="text-sm text-gray-500">Bir kanal seçin veya yeni kanal oluşturun</p>
+                </div>
+              </div>
+            ) : messages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
                 <div className="inline-flex p-4 rounded-2xl bg-gradient-to-br from-[#5865f2]/20 to-[#eb459e]/20 mb-4">
@@ -1054,10 +1393,11 @@ const App: React.FC = () => {
               {Array.from(typingUsers).join(', ')} yazıyor...
             </div>
           )}
-        </div>
+          </div>
+        )}
 
         {/* Input Area */}
-        {selectedChannel && (
+        {selectedChannel && channels.find(c => c.id === selectedChannel)?.type !== 'whiteboard' && (
           <div className="p-3 md:p-4 glass-effect border-t border-white/10 flex-shrink-0">
             <div className="flex gap-2">
               <div className="flex gap-1.5">
@@ -1072,15 +1412,19 @@ const App: React.FC = () => {
                 <button
                   onClick={() => setShowGiphyPicker(true)}
                   disabled={isLoading}
-                  className="px-3 py-2 text-xs font-bold bg-gradient-to-r from-pink-500 via-purple-500 via-blue-500 to-green-500 bg-clip-text text-transparent hover:from-pink-400 hover:via-purple-400 hover:via-blue-400 hover:to-green-400 hover:bg-white/5 rounded-lg transition disabled:opacity-50 relative overflow-hidden group"
+                  className="px-3 py-2 text-xs font-bold rounded-lg transition disabled:opacity-50 relative overflow-hidden group border border-white/10 hover:border-white/20"
                   title="GIF Gönder"
-                  style={{
-                    backgroundSize: '200% 200%',
-                    animation: 'rainbow 3s ease infinite'
-                  }}
                 >
-                  <span className="relative z-10">rainbow gif</span>
-                  <div className="absolute inset-0 bg-gradient-to-r from-pink-500/20 via-purple-500/20 via-blue-500/20 to-green-500/20 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                  <span 
+                    className="relative z-10 bg-gradient-to-r from-pink-500 via-purple-500 via-blue-500 to-green-500 bg-clip-text text-transparent"
+                    style={{
+                      backgroundSize: '200% 200%',
+                      animation: 'rainbow 3s ease infinite'
+                    }}
+                  >
+                    rainbow gif
+                  </span>
+                  <div className="absolute inset-0 bg-gradient-to-r from-pink-500/10 via-purple-500/10 via-blue-500/10 to-green-500/10 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg"></div>
                 </button>
                 <button
                   onClick={handleBreak}

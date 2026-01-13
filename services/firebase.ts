@@ -28,12 +28,13 @@ if (typeof window !== 'undefined') {
 // Collection references
 const channelsCollection = collection(db, 'channels');
 const messagesCollection = (channelId: string) => collection(db, `channels/${channelId}/messages`);
+const whiteboardStrokesCollection = (channelId: string) => collection(db, `channels/${channelId}/whiteboard`);
 const usersCollection = collection(db, 'users');
 const coursesCollection = collection(db, 'courses');
 const courseFilesCollection = (courseId: string) => collection(db, `courses/${courseId}/files`);
 
 // Channel functions
-export const createChannel = async (channelData: { name: string; description?: string; createdBy: string; type?: 'text' | 'voice' }) => {
+export const createChannel = async (channelData: { name: string; description?: string; createdBy: string; type?: 'text' | 'voice' | 'whiteboard' }) => {
   return await addDoc(channelsCollection, {
     ...channelData,
     type: channelData.type || 'text',
@@ -155,6 +156,47 @@ export const subscribeToCourseFiles = (courseId: string, callback: (files: any[]
     }));
     callback(files);
   });
+};
+
+// Whiteboard functions
+export const addWhiteboardStroke = async (channelId: string, stroke: {
+  points: Array<{ x: number; y: number }>;
+  color: string;
+  lineWidth: number;
+  tool: 'pen' | 'eraser';
+  username: string;
+  timestamp: number;
+}) => {
+  const strokesRef = whiteboardStrokesCollection(channelId);
+  return await addDoc(strokesRef, stroke);
+};
+
+export const subscribeToWhiteboard = (channelId: string, callback: (strokes: any[]) => void) => {
+  if (!channelId) return () => {};
+  const strokesRef = whiteboardStrokesCollection(channelId);
+  const q = query(strokesRef, orderBy('timestamp', 'asc'));
+  
+  return onSnapshot(q, (snapshot) => {
+    const strokes = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    callback(strokes);
+  });
+};
+
+export const clearWhiteboard = async (channelId: string) => {
+  if (!channelId) return;
+  const strokesRef = whiteboardStrokesCollection(channelId);
+  const q = query(strokesRef);
+  const snapshot = await getDocs(q);
+  const batch = writeBatch(db);
+  
+  snapshot.docs.forEach((doc) => {
+    batch.delete(doc.ref);
+  });
+  
+  return await batch.commit();
 };
 
 export { db, storage };
