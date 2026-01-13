@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, User } from "firebase/auth";
-import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, getDocs, writeBatch, doc, setDoc, getDoc } from "firebase/firestore";
+import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, getDocs, writeBatch, doc, setDoc, getDoc, limit, startAfter, QueryDocumentSnapshot } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { getAnalytics } from "firebase/analytics";
 
@@ -103,18 +103,44 @@ export const addReaction = async (channelId: string, messageId: string, emoji: s
   }
 };
 
-export const subscribeToMessages = (channelId: string, callback: (messages: any[]) => void) => {
+export const subscribeToMessages = (channelId: string, callback: (messages: any[]) => void, messageLimit: number = 50) => {
   if (!channelId) return () => {};
   const channelMessagesRef = messagesCollection(channelId);
-  const q = query(channelMessagesRef, orderBy('timestamp', 'asc'));
+  const q = query(channelMessagesRef, orderBy('timestamp', 'desc'), limit(messageLimit));
   
   return onSnapshot(q, (snapshot) => {
     const messages = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
-    }));
+    })).reverse(); // Reverse to show oldest first
     callback(messages);
   });
+};
+
+export const loadMoreMessages = async (channelId: string, oldestMessageTimestamp: number, limitCount: number = 50): Promise<any[]> => {
+  if (!channelId) return [];
+  const channelMessagesRef = messagesCollection(channelId);
+  
+  // Get messages older than the oldest one we have
+  // We need to find a document with timestamp < oldestMessageTimestamp
+  // First, get messages ordered by timestamp desc, then filter
+  const q = query(
+    channelMessagesRef,
+    orderBy('timestamp', 'desc'),
+    limit(limitCount * 2) // Get more to ensure we have enough after filtering
+  );
+  
+  const snapshot = await getDocs(q);
+  const allMessages = snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  }));
+  
+  // Filter to only get messages older than what we have
+  const olderMessages = allMessages.filter((msg: any) => msg.timestamp < oldestMessageTimestamp);
+  
+  // Return only the requested limit, oldest first
+  return olderMessages.slice(0, limitCount).reverse();
 };
 
 export const clearAllMessages = async (channelId: string) => {
@@ -274,6 +300,35 @@ export const addWhiteboardStroke = async (channelId: string, stroke: {
 export const subscribeToWhiteboard = (channelId: string, callback: (strokes: any[]) => void) => {
   if (!channelId) return () => {};
   const strokesRef = whiteboardStrokesCollection(channelId);
+  const q = query(strokesRef, orderBy('timestamp', 'asc'));
+  
+  return onSnapshot(q, (snapshot) => {
+    const strokes = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    callback(strokes);
+  });
+};
+
+// PDF drawing functions
+const pdfDrawingsCollection = (pdfId: string) => collection(db, `pdfDrawings/${pdfId}/strokes`);
+
+export const addPdfStroke = async (pdfId: string, stroke: {
+  points: Array<{ x: number; y: number }>;
+  color: string;
+  lineWidth: number;
+  tool: 'pen' | 'eraser';
+  username: string;
+  timestamp: number;
+}) => {
+  const strokesRef = pdfDrawingsCollection(pdfId);
+  return await addDoc(strokesRef, stroke);
+};
+
+export const subscribeToPdfDrawings = (pdfId: string, callback: (strokes: any[]) => void) => {
+  if (!pdfId) return () => {};
+  const strokesRef = pdfDrawingsCollection(pdfId);
   const q = query(strokesRef, orderBy('timestamp', 'asc'));
   
   return onSnapshot(q, (snapshot) => {

@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip, Cigarette, BookOpen, FileText, Plus, Volume2, Settings, Search, Pin, Edit2, Heart, ThumbsUp, Laugh, Star, Moon, Sun, Bell, BellOff, Users, Crown, PenTool, Eraser, Palette, Minus, Maximize, Mail, Lock, Coffee, ChevronDown } from 'lucide-react';
-import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels, addWhiteboardStroke, subscribeToWhiteboard, clearWhiteboard, signUp, signIn, logOut, onAuthChange, getUserProfile, updateUserProfile, addReaction } from './services/firebase';
+import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels, addWhiteboardStroke, subscribeToWhiteboard, clearWhiteboard, signUp, signIn, logOut, onAuthChange, getUserProfile, updateUserProfile, addReaction, addPdfStroke, subscribeToPdfDrawings, db, loadMoreMessages } from './services/firebase';
+import { collection, getDocs, writeBatch } from 'firebase/firestore';
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Set up PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 interface Message {
   id: string;
@@ -116,11 +121,16 @@ const Whiteboard: React.FC<{
   strokes: WhiteboardStroke[];
 }> = ({ channelId, user, strokes }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentTool, setCurrentTool] = useState<'pen' | 'eraser'>('pen');
   const [currentColor, setCurrentColor] = useState('#ffffff');
   const [lineWidth, setLineWidth] = useState(3);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [scale, setScale] = useState(1);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
   const currentStrokeRef = useRef<Array<{ x: number; y: number }>>([]);
 
@@ -138,22 +148,24 @@ const Whiteboard: React.FC<{
       const rect = canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
       
-      // Set actual canvas size
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
+      // Set actual canvas size (large for infinite canvas)
+      const canvasWidth = 10000;
+      const canvasHeight = 10000;
+      canvas.width = canvasWidth * dpr;
+      canvas.height = canvasHeight * dpr;
       
       // Scale context for high DPI displays
       ctx.scale(dpr, dpr);
       
       // Set display size
-      canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
+      canvas.style.width = `${canvasWidth}px`;
+      canvas.style.height = `${canvasHeight}px`;
 
       // Clear canvas
       ctx.fillStyle = '#1a1c1f';
       ctx.fillRect(0, 0, rect.width, rect.height);
 
-      // Draw all strokes
+      // Draw all strokes (world coordinates)
       strokes.forEach((stroke) => {
         if (stroke.points.length < 2) return;
 
@@ -189,9 +201,10 @@ const Whiteboard: React.FC<{
     const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0]?.clientY : e.clientY;
 
+    // Convert screen coordinates to world coordinates
     return {
-      x: clientX - rect.left,
-      y: clientY - rect.top
+      x: (clientX - rect.left - offset.x) / scale,
+      y: (clientY - rect.top - offset.y) / scale
     };
   };
 
@@ -248,17 +261,59 @@ const Whiteboard: React.FC<{
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const point = getPointFromEvent(e);
-    if (point) startDrawing(point);
+    if (e.button === 1 || (e.button === 0 && e.ctrlKey) || (e.button === 0 && e.metaKey)) {
+      // Middle mouse or Ctrl/Cmd + Left mouse = pan
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - offset.x, y: e.clientY - offset.y });
+      e.preventDefault();
+      return;
+    }
+    
+    if (e.button === 0) {
+      const point = getPointFromEvent(e);
+      if (point) startDrawing(point);
+    }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isPanning) {
+      setOffset({
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y
+      });
+      return;
+    }
+    
     const point = getPointFromEvent(e);
     if (point) draw(point);
-    };
+  };
 
-    const handleMouseUp = () => {
+  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isPanning) {
+      setIsPanning(false);
+      return;
+    }
     stopDrawing();
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const newScale = Math.max(0.1, Math.min(5, scale * delta));
+    
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) {
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      
+      const newOffset = {
+        x: mouseX - (mouseX - offset.x) * (newScale / scale),
+        y: mouseY - (mouseY - offset.y) * (newScale / scale)
+      };
+      
+      setScale(newScale);
+      setOffset(newOffset);
+    }
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
@@ -354,19 +409,320 @@ const Whiteboard: React.FC<{
       </div>
       
       {/* Canvas */}
-      <div className="flex-1 relative overflow-hidden bg-[#1a1c1f]">
-        <canvas
-          ref={canvasRef}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-          className="absolute inset-0 w-full h-full cursor-crosshair"
-          style={{ touchAction: 'none' }}
-        />
+      <div ref={containerRef} className="flex-1 relative overflow-hidden bg-[#1a1c1f]" style={{ cursor: isPanning ? 'grabbing' : 'grab' }}>
+        <div 
+          style={{
+            transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+            transformOrigin: '0 0',
+            width: '10000px',
+            height: '10000px',
+            position: 'absolute',
+            top: 0,
+            left: 0
+          }}
+        >
+          <canvas
+            ref={canvasRef}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onWheel={handleWheel}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            className="absolute top-0 left-0 cursor-crosshair"
+            style={{ 
+              touchAction: 'none',
+              width: '10000px',
+              height: '10000px'
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// PDF Viewer with Drawing Component
+const PdfViewerWithDrawing: React.FC<{
+  pdfUrl: string;
+  pdfId: string;
+  user: UserData;
+  darkMode: boolean;
+  onClose: () => void;
+}> = ({ pdfUrl, pdfId, user, darkMode, onClose }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [currentTool, setCurrentTool] = useState<'pen' | 'eraser'>('pen');
+  const [currentColor, setCurrentColor] = useState('#ff0000');
+  const [lineWidth, setLineWidth] = useState(3);
+  const [strokes, setStrokes] = useState<WhiteboardStroke[]>([]);
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
+  const currentStrokeRef = useRef<Array<{ x: number; y: number }>>([]);
+
+  const colors = ['#ff0000', '#000000', '#ffffff', '#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
+
+  // Subscribe to PDF drawings
+  useEffect(() => {
+    const unsubscribe = subscribeToPdfDrawings(pdfId, (firebaseStrokes) => {
+      setStrokes(firebaseStrokes as WhiteboardStroke[]);
+    });
+    return () => unsubscribe();
+  }, [pdfId]);
+
+  // Draw all strokes on canvas
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const drawStrokes = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+
+      ctx.scale(dpr, dpr);
+      canvas.style.width = `${rect.width}px`;
+      canvas.style.height = `${rect.height}px`;
+
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      strokes.forEach((stroke) => {
+        if (stroke.points.length === 0) return;
+
+        ctx.beginPath();
+        ctx.strokeStyle = stroke.tool === 'eraser' ? 'transparent' : stroke.color;
+        ctx.lineWidth = stroke.lineWidth;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
+
+        ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+        for (let i = 1; i < stroke.points.length; i++) {
+          ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+        }
+        ctx.stroke();
+      });
+    };
+
+    drawStrokes();
+    const resizeObserver = new ResizeObserver(drawStrokes);
+    resizeObserver.observe(canvas);
+
+    return () => resizeObserver.disconnect();
+  }, [strokes]);
+
+  const getPointFromEvent = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>): { x: number; y: number } | null => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0]?.clientY : e.clientY;
+
+    if (clientX === undefined || clientY === undefined) return null;
+
+    return {
+      x: (clientX - rect.left) * (canvas.width / rect.width / (window.devicePixelRatio || 1)),
+      y: (clientY - rect.top) * (canvas.height / rect.height / (window.devicePixelRatio || 1))
+    };
+  };
+
+  const startDrawing = (point: { x: number; y: number }) => {
+    setIsDrawing(true);
+    lastPointRef.current = point;
+    currentStrokeRef.current = [point];
+  };
+
+  const draw = (point: { x: number; y: number }) => {
+    if (!isDrawing || !lastPointRef.current) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+
+    ctx.beginPath();
+    ctx.strokeStyle = currentTool === 'eraser' ? 'transparent' : currentColor;
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalCompositeOperation = currentTool === 'eraser' ? 'destination-out' : 'source-over';
+
+    ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+
+    currentStrokeRef.current.push(point);
+    lastPointRef.current = point;
+  };
+
+  const stopDrawing = async () => {
+    if (!isDrawing || currentStrokeRef.current.length === 0) return;
+
+    setIsDrawing(false);
+
+    try {
+      await addPdfStroke(pdfId, {
+        points: [...currentStrokeRef.current],
+        color: currentColor,
+        lineWidth: lineWidth,
+        tool: currentTool,
+        username: user.username,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      console.error('Error saving PDF stroke:', error);
+    }
+
+    currentStrokeRef.current = [];
+    lastPointRef.current = null;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const point = getPointFromEvent(e);
+    if (point) startDrawing(point);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const point = getPointFromEvent(e);
+    if (point) draw(point);
+  };
+
+  const handleMouseUp = () => {
+    stopDrawing();
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const point = getPointFromEvent(e);
+    if (point) startDrawing(point);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const point = getPointFromEvent(e);
+    if (point) draw(point);
+  };
+
+  const handleTouchEnd = () => {
+    stopDrawing();
+  };
+
+  const handleClear = async () => {
+    if (confirm('PDF üzerindeki tüm çizimleri temizlemek istediğinize emin misiniz?')) {
+      try {
+        const strokesRef = collection(db, `pdfDrawings/${pdfId}/strokes`);
+        const snapshot = await getDocs(strokesRef);
+        const batch = writeBatch(db);
+        snapshot.docs.forEach((doc) => {
+          batch.delete(doc.ref);
+        });
+        await batch.commit();
+      } catch (error) {
+        console.error('Error clearing PDF drawings:', error);
+      }
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className={`${darkMode ? 'bg-[#2f3136]' : 'bg-white'} rounded-lg shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col border ${darkMode ? 'border-white/10' : 'border-gray-200'}`} onClick={(e) => e.stopPropagation()}>
+        {/* Toolbar */}
+        <div className={`flex items-center justify-between p-3 ${darkMode ? 'bg-[#2f3136] border-white/10' : 'bg-gray-100 border-gray-200'} border-b flex-shrink-0`}>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentTool('pen')}
+              className={`p-2 rounded-lg transition-all ${currentTool === 'pen' ? 'bg-[#5865f2] text-white' : darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'}`}
+              title="Kalem"
+            >
+              <PenTool size={20} />
+            </button>
+            <button
+              onClick={() => setCurrentTool('eraser')}
+              className={`p-2 rounded-lg transition-all ${currentTool === 'eraser' ? 'bg-[#5865f2] text-white' : darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'}`}
+              title="Silgi"
+            >
+              <Eraser size={20} />
+            </button>
+            <div className={`w-px h-6 ${darkMode ? 'bg-white/10' : 'bg-gray-300'} mx-1`}></div>
+            <div className="flex items-center gap-1">
+              {colors.map((color) => (
+                <button
+                  key={color}
+                  onClick={() => setCurrentColor(color)}
+                  className={`w-8 h-8 rounded-lg border-2 transition-all ${
+                    currentColor === color ? 'border-white scale-110' : 'border-transparent hover:scale-105'
+                  }`}
+                  style={{ backgroundColor: color }}
+                  title={color}
+                />
+              ))}
+            </div>
+            <div className={`w-px h-6 ${darkMode ? 'bg-white/10' : 'bg-gray-300'} mx-1`}></div>
+            <div className="flex items-center gap-2">
+              <Minus size={16} className={darkMode ? 'text-gray-400' : 'text-gray-600'} />
+              <input
+                type="range"
+                min="1"
+                max="20"
+                value={lineWidth}
+                onChange={(e) => setLineWidth(Number(e.target.value))}
+                className="w-24"
+              />
+              <Plus size={16} className={darkMode ? 'text-gray-400' : 'text-gray-600'} />
+              <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'} w-8 text-center`}>{lineWidth}px</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleClear}
+              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-red-400 hover:bg-red-500/10' : 'text-gray-600 hover:text-red-600 hover:bg-red-100'} rounded-lg transition-all`}
+              title="Temizle"
+            >
+              <Trash2 size={20} />
+            </button>
+            <button
+              onClick={onClose}
+              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all`}
+              title="Kapat"
+            >
+              <X size={20} />
+            </button>
+          </div>
+        </div>
+
+        {/* PDF with Canvas Overlay */}
+        <div className="flex-1 relative overflow-hidden">
+          <iframe
+            ref={iframeRef}
+            src={pdfUrl}
+            className="w-full h-full border-0"
+            title="PDF Viewer"
+          />
+          <canvas
+            ref={canvasRef}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            className="absolute inset-0 w-full h-full cursor-crosshair pointer-events-auto"
+            style={{ touchAction: 'none' }}
+          />
+        </div>
       </div>
     </div>
   );
@@ -631,6 +987,9 @@ const App: React.FC = () => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [authError, setAuthError] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState('');
@@ -653,7 +1012,8 @@ const App: React.FC = () => {
   const [whiteboardStrokes, setWhiteboardStrokes] = useState<WhiteboardStroke[]>([]);
   const [newChannelType, setNewChannelType] = useState<'text' | 'whiteboard'>('text');
   const [showBreakMenu, setShowBreakMenu] = useState(false);
-  const [selectedPdf, setSelectedPdf] = useState<string | null>(null);
+  const [selectedPdf, setSelectedPdf] = useState<{ url: string; id: string } | null>(null);
+  const [pdfStrokes, setPdfStrokes] = useState<WhiteboardStroke[]>([]);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showMentionPicker, setShowMentionPicker] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
@@ -806,6 +1166,7 @@ const App: React.FC = () => {
     const unsubscribe = subscribeToMessages(selectedChannel, (firebaseMessages) => {
       const prevLength = prevMessagesLengthRef.current;
       setMessages(firebaseMessages);
+      setHasMoreMessages(firebaseMessages.length >= 50); // If we got 50 messages, there might be more
       
       if (firebaseMessages.length > prevLength && prevLength > 0) {
         const lastMessage = firebaseMessages[firebaseMessages.length - 1];
@@ -1554,55 +1915,55 @@ const App: React.FC = () => {
                 </div>
 
         {/* User Footer */}
-        <div className={`h-16 bg-gradient-to-t ${darkMode ? 'from-black/40' : 'from-gray-100/40'} to-transparent border-t ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between px-3 flex-shrink-0 backdrop-blur-sm`}>
-          <div className="flex items-center gap-3 flex-1 min-w-0">
+        <div className={`h-16 bg-gradient-to-t ${darkMode ? 'from-black/40' : 'from-gray-100/40'} to-transparent border-t ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between px-2 md:px-3 flex-shrink-0 backdrop-blur-sm`}>
+          <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-30"></div>
-              <img src={user.avatar} alt={user.username} className="w-10 h-10 rounded-full flex-shrink-0 relative z-10 ring-2 ring-white/10" />
+              <img src={user.avatar} alt={user.username} className="w-8 h-8 md:w-10 md:h-10 rounded-full flex-shrink-0 relative z-10 ring-2 ring-white/10" />
             </div>
-            <span className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-gray-900'} truncate`}>{user.username}</span>
+            <span className={`text-xs md:text-sm font-bold ${darkMode ? 'text-white' : 'text-gray-900'} truncate hidden sm:block`}>{user.username}</span>
           </div>
-          <div className="flex gap-1">
+          <div className="flex gap-0.5 md:gap-1">
             <button
               onClick={() => setDarkMode(!darkMode)}
-              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
+              className={`p-1.5 md:p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
               title={darkMode ? 'Açık Tema' : 'Koyu Tema'}
             >
-              {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-                    </button>
+              {darkMode ? <Sun size={16} className="md:w-[18px] md:h-[18px]" /> : <Moon size={16} className="md:w-[18px] md:h-[18px]" />}
+            </button>
             <button
               onClick={() => setNotificationsEnabled(!notificationsEnabled)}
-              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
+              className={`p-1.5 md:p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
               title={notificationsEnabled ? 'Bildirimleri Kapat' : 'Bildirimleri Aç'}
             >
-              {notificationsEnabled ? <Bell size={18} /> : <BellOff size={18} />}
-                    </button>
+              {notificationsEnabled ? <Bell size={16} className="md:w-[18px] md:h-[18px]" /> : <BellOff size={16} className="md:w-[18px] md:h-[18px]" />}
+            </button>
             <button
               onClick={handleClearChat}
-              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-red-400 hover:bg-red-500/10' : 'text-gray-600 hover:text-red-600 hover:bg-red-100'} rounded-lg transition-all hover:scale-110`}
+              className={`p-1.5 md:p-2 ${darkMode ? 'text-gray-400 hover:text-red-400 hover:bg-red-500/10' : 'text-gray-600 hover:text-red-600 hover:bg-red-100'} rounded-lg transition-all hover:scale-110`}
               title="Sohbeti Temizle"
             >
-              <Trash2 size={18} />
+              <Trash2 size={16} className="md:w-[18px] md:h-[18px]" />
             </button>
             <button
               onClick={() => {
                 setEditUsername(user.username);
                 setShowSettings(true);
               }}
-              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
+              className={`p-1.5 md:p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
               title="Ayarlar"
             >
-              <Settings size={18} />
+              <Settings size={16} className="md:w-[18px] md:h-[18px]" />
             </button>
             <button
               onClick={handleLogout}
-              className={`p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
+              className={`p-1.5 md:p-2 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded-lg transition-all hover:scale-110`}
               title="Çıkış"
             >
-              <LogOut size={18} />
-                    </button>
-                </div>
-            </div>
+              <LogOut size={16} className="md:w-[18px] md:h-[18px]" />
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Right Sidebar - Courses & Files */}
@@ -1642,7 +2003,7 @@ const App: React.FC = () => {
               {courseFiles.map((file) => (
                 <div
                   key={file.id}
-                  onClick={() => file.type === 'application/pdf' ? setSelectedPdf(file.url) : window.open(file.url, '_blank')}
+                  onClick={() => file.type === 'application/pdf' ? setSelectedPdf({ url: file.url, id: file.id }) : window.open(file.url, '_blank')}
                   className={`block p-3 ${darkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'} rounded-lg transition-all hover-glow cursor-pointer`}
                 >
                   <div className="flex items-center gap-2">
@@ -1782,7 +2143,44 @@ const App: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div 
+              ref={messagesContainerRef}
+              className="space-y-3 overflow-y-auto flex-1"
+              onScroll={async (e) => {
+                const container = e.currentTarget;
+                // Load more when scrolled to top
+                if (container.scrollTop < 100 && hasMoreMessages && !isLoadingMoreMessages && selectedChannel) {
+                  setIsLoadingMoreMessages(true);
+                  try {
+                    const oldestMessage = messages[0];
+                    if (oldestMessage) {
+                      const moreMessages = await loadMoreMessages(selectedChannel, oldestMessage.timestamp, 50);
+                      if (moreMessages.length > 0) {
+                        const currentScrollHeight = container.scrollHeight;
+                        setMessages(prev => [...moreMessages, ...prev]);
+                        setHasMoreMessages(moreMessages.length >= 50);
+                        // Maintain scroll position
+                        setTimeout(() => {
+                          const newScrollHeight = container.scrollHeight;
+                          container.scrollTop = newScrollHeight - currentScrollHeight;
+                        }, 0);
+                      } else {
+                        setHasMoreMessages(false);
+                      }
+                    }
+                  } catch (error) {
+                    console.error('Error loading more messages:', error);
+                  } finally {
+                    setIsLoadingMoreMessages(false);
+                  }
+                }
+              }}
+            >
+              {isLoadingMoreMessages && (
+                <div className="text-center py-2 text-gray-400 text-sm">
+                  Daha fazla mesaj yükleniyor...
+                </div>
+              )}
               {filteredMessages.map((msg) => {
                 const isMentioned = user && (
                   msg.mentions?.includes(user.username) || 
@@ -1828,6 +2226,33 @@ const App: React.FC = () => {
                         <Pin size={12} className="text-yellow-400" />
                       )}
                     </div>
+                    {/* Reactions - shown above message content */}
+                    {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                      <div className="flex gap-1 flex-wrap mb-2">
+                        {Object.entries(msg.reactions).map(([emoji, users]) => {
+                          const userList = Array.isArray(users) ? users : [];
+                          const hasReacted = user && userList.includes(user.username);
+                          return (
+                            <button
+                              key={emoji}
+                              onClick={() => {
+                                if (user && selectedChannel) {
+                                  addReaction(selectedChannel, msg.id, emoji, user.username);
+                                }
+                              }}
+                              className={`px-2 py-1 rounded flex items-center gap-1 text-xs transition ${
+                                hasReacted 
+                                  ? 'bg-[#5865f2]/30 hover:bg-[#5865f2]/40' 
+                                  : darkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'
+                              } ${darkMode ? 'text-white' : 'text-gray-700'}`}
+                            >
+                              <span>{emoji}</span>
+                              <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>{userList.length}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     {msg.imageUrl && (
                       <div className="mb-2">
                         <img
@@ -1863,33 +2288,6 @@ const App: React.FC = () => {
                           lineHeight: '1.5'
                         }}
                       />
-                    )}
-                    {/* Reactions - shown above message content */}
-                    {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                      <div className="flex gap-1 flex-wrap mb-2">
-                        {Object.entries(msg.reactions).map(([emoji, users]) => {
-                          const userList = Array.isArray(users) ? users : [];
-                          const hasReacted = user && userList.includes(user.username);
-                          return (
-                            <button
-                              key={emoji}
-                              onClick={() => {
-                                if (user && selectedChannel) {
-                                  addReaction(selectedChannel, msg.id, emoji, user.username);
-                                }
-                              }}
-                              className={`px-2 py-1 rounded flex items-center gap-1 text-xs transition ${
-                                hasReacted 
-                                  ? 'bg-[#5865f2]/30 hover:bg-[#5865f2]/40' 
-                                  : darkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'
-                              } ${darkMode ? 'text-white' : 'text-gray-700'}`}
-                            >
-                              <span>{emoji}</span>
-                              <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>{userList.length}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
                     )}
                     <div className="flex items-center gap-2 mt-2">
                       <button
@@ -2344,25 +2742,15 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* PDF Viewer Modal */}
-      {selectedPdf && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setSelectedPdf(null)}>
-          <div className="bg-white rounded-lg shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b border-gray-200">
-              <h2 className="text-lg font-bold text-gray-900">PDF Görüntüleyici</h2>
-              <button onClick={() => setSelectedPdf(null)} className="text-gray-400 hover:text-gray-600 transition">
-                <X size={24} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              <iframe
-                src={selectedPdf}
-                className="w-full h-full border-0"
-                title="PDF Viewer"
-              />
-            </div>
-          </div>
-        </div>
+      {/* PDF Viewer Modal with Drawing */}
+      {selectedPdf && user && (
+        <PdfViewerWithDrawing
+          pdfUrl={selectedPdf.url}
+          pdfId={selectedPdf.id}
+          user={user}
+          darkMode={darkMode}
+          onClose={() => setSelectedPdf(null)}
+        />
       )}
     </div>
   );
