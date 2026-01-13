@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, User, Image as ImageIcon, Trash2, LogOut, MessageSquare, X, Hash, Smile, Paperclip, Cigarette, BookOpen, FileText, Plus, Volume2, Settings, Search, Pin, Edit2, Heart, ThumbsUp, Laugh, Star, Moon, Sun, Bell, BellOff, Users, Crown, PenTool, Eraser, Palette, Minus, Maximize, Mail, Lock, Coffee, ChevronDown } from 'lucide-react';
-import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels, addWhiteboardStroke, subscribeToWhiteboard, clearWhiteboard, signUp, signIn, logOut, onAuthChange, getUserProfile, updateUserProfile } from './services/firebase';
+import { sendMessage, subscribeToMessages, clearAllMessages, saveUser, uploadImage, uploadFile, createCourse, subscribeToCourses, addFileToCourse, subscribeToCourseFiles, createChannel, subscribeToChannels, addWhiteboardStroke, subscribeToWhiteboard, clearWhiteboard, signUp, signIn, logOut, onAuthChange, getUserProfile, updateUserProfile, addReaction } from './services/firebase';
 
 interface Message {
   id: string;
@@ -12,6 +12,7 @@ interface Message {
   timestamp: number;
   type: 'text' | 'image' | 'gif' | 'break';
   reactions?: { [emoji: string]: string[] };
+  mentions?: string[];
   edited?: boolean;
   pinned?: boolean;
 }
@@ -371,6 +372,57 @@ const Whiteboard: React.FC<{
   );
 };
 
+// Emoji Picker Component
+const EmojiPicker: React.FC<{
+  onSelect: (emoji: string) => void;
+  onClose: () => void;
+}> = ({ onSelect, onClose }) => {
+  const emojiCategories = [
+    { name: 'Yüzler', emojis: ['😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩', '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '🧐'] },
+    { name: 'El İşaretleri', emojis: ['👋', '🤚', '🖐', '✋', '🖖', '👌', '🤏', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '🖕', '👇', '☝️', '👍', '👎', '✊', '👊', '🤛', '🤜', '👏', '🙌', '👐', '🤲', '🤝', '🙏', '✍️', '💪', '🦾', '🦿', '🦵', '🦶', '👂', '🦻', '👃', '🧠', '🦷', '🦴', '👀', '👁', '👅', '👄'] },
+    { name: 'Kalpler', emojis: ['❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟', '☮️', '✝️', '☪️', '🕉', '☸️', '✡️', '🔯', '🕎', '☯️', '☦️', '🛐', '⛎', '♈', '♉', '♊', '♋', '♌', '♍', '♎', '♏', '♐', '♑', '♒', '♓', '🆔', '⚛️', '🉑', '☢️', '☣️'] },
+    { name: 'Nesneler', emojis: ['⌚', '📱', '📲', '💻', '⌨️', '🖥', '🖨', '🖱', '🖲', '🕹', '🗜', '💾', '💿', '📀', '📼', '📷', '📸', '📹', '🎥', '📽', '🎞', '📞', '☎️', '📟', '📠', '📺', '📻', '🎙', '🎚', '🎛', '⏱', '⏲', '⏰', '🕰', '⌛', '⏳', '📡', '🔋', '🔌', '💡', '🔦', '🕯', '🧯', '🛢', '💸', '💵', '💴', '💶', '💷', '💰', '💳', '💎', '⚖️', '🧰', '🔧', '🔨', '⚒', '🛠', '⛏', '🔩', '⚙️', '🧱', '⛓', '🧲', '🔫', '💣', '🧨', '🔪', '🗡', '⚔️', '🛡', '🚬', '⚰️', '⚱️', '🏺', '🔮', '📿', '🧿', '💈', '⚗️', '🔭', '🔬', '🕳', '💊', '💉', '🧬', '🦠', '🧫', '🧪', '🌡', '🧹', '🧺', '🧻', '🚽', '🚿', '🛁', '🛀', '🧼', '🧽', '🧴', '🛎', '🔑', '🗝', '🚪', '🛋', '🛏', '🛌', '🧸', '🖼', '🛍', '🛒', '🎁', '🎈', '🎉', '🎊', '🎀', '🎗', '🏆', '🥇', '🥈', '🥉', '⚽', '⚾', '🏀', '🏐', '🏈', '🏉', '🎾', '🏏', '🏑', '🏒', '🥍', '🏓', '🏸', '🥊', '🥋', '🥅', '⛳', '🏹', '🎣', '🥿', '🛷', '⛸', '🎿', '⛷', '🏂', '🏋️', '🤼', '🤸', '🤺', '🤾', '🤹', '🧘', '🏄', '🏊', '🤽', '🚣', '🧗', '🚵', '🚴', '🏇', '🛶', '⛵', '🚤', '🛥', '🛳', '⛴', '🚢', '⚓', '🚁', '✈️', '🛩', '🛫', '🛬', '🪂', '💺', '🚀', '🚟', '🚠', '🚡', '🛰', '🚂', '🚃', '🚄', '🚅', '🚆', '🚇', '🚈', '🚉', '🚊', '🚝', '🚞', '🚋', '🚌', '🚍', '🚎', '🚐', '🚑', '🚒', '🚓', '🚔', '🚕', '🚖', '🚗', '🚘', '🚙', '🚚', '🚛', '🚜', '🏎', '🏍', '🛵', '🚲', '🛴', '🛹', '🛼', '🚏', '🛣', '🛤', '🛢', '⛽', '🚨', '🚥', '🚦', '🛑', '🚧'] },
+    { name: 'Yiyecekler', emojis: ['🍏', '🍎', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🍈', '🍒', '🍑', '🥭', '🍍', '🥥', '🥝', '🍅', '🍆', '🥑', '🥦', '🥬', '🥒', '🌶', '🌽', '🥕', '🥔', '🍠', '🥐', '🥯', '🍞', '🥖', '🥨', '🧀', '🥚', '🍳', '🥞', '🥓', '🥩', '🍗', '🍖', '🌭', '🍔', '🍟', '🍕', '🥪', '🥙', '🌮', '🌯', '🥗', '🥘', '🥫', '🍝', '🍜', '🍲', '🍛', '🍣', '🍱', '🥟', '🍤', '🍙', '🍚', '🍘', '🍥', '🥠', '🥮', '🍢', '🍡', '🍧', '🍨', '🍦', '🥧', '🍰', '🎂', '🍮', '🍭', '🍬', '🍫', '🍿', '🍩', '🍪', '🌰', '🥜', '🍯', '🥛', '🍼', '☕', '🍵', '🥃', '🍶', '🍺', '🍻', '🥂', '🍷'] },
+    { name: 'Hayvanlar', emojis: ['🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐽', '🐸', '🐵', '🙈', '🙉', '🙊', '🐒', '🐔', '🐧', '🐦', '🐤', '🐣', '🐥', '🦆', '🦅', '🦉', '🦇', '🐺', '🐗', '🐴', '🦄', '🐝', '🐛', '🦋', '🐌', '🐞', '🐜', '🦟', '🦗', '🕷', '🦂', '🐢', '🐍', '🦎', '🦖', '🦕', '🐙', '🦑', '🦐', '🦞', '🦀', '🐡', '🐠', '🐟', '🐬', '🐳', '🐋', '🦈', '🐊', '🐅', '🐆', '🦓', '🦍', '🦧', '🐘', '🦛', '🦏', '🐪', '🐫', '🦒', '🦘', '🦬', '🐃', '🐂', '🐄', '🐎', '🐖', '🐏', '🐑', '🦙', '🐐', '🦌', '🐕', '🐩', '🦮', '🐕‍🦺', '🐈', '🐓', '🦃', '🦤', '🦚', '🦜', '🦢', '🦩', '🕊', '🐇', '🦝', '🦨', '🦡', '🦫', '🦦', '🦥', '🐁', '🐀', '🐿', '🦔'] },
+    { name: 'Doğa', emojis: ['🌵', '🎄', '🌲', '🌳', '🌴', '🌱', '🌿', '☘️', '🍀', '🎍', '🎋', '🍃', '🍂', '🍁', '🍄', '🌾', '💐', '🌷', '🌹', '🥀', '🌺', '🌸', '🌼', '🌻', '🌞', '🌝', '🌛', '🌜', '🌚', '🌕', '🌖', '🌗', '🌘', '🌑', '🌒', '🌓', '🌔', '🌙', '🌎', '🌍', '🌏', '🪐', '💫', '⭐', '🌟', '✨', '⚡', '☄️', '💥', '🔥', '🌈', '☀️', '🌤', '⛅', '🌥', '☁️', '🌦', '🌧', '⛈', '🌩', '❄️', '☃️', '⛄', '🌨', '💨', '💧', '💦', '☔', '☂️', '🌊', '🌫'] }
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-[#36393f]/95 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-[#2f3136] rounded-lg shadow-2xl w-full max-w-2xl h-[500px] flex flex-col border border-[#202225]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-[#202225]">
+          <h2 className="text-lg font-bold text-white">Emoji Seç</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition">
+            <X size={24} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {emojiCategories.map((category, idx) => (
+            <div key={idx} className="mb-6">
+              <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">{category.name}</h3>
+              <div className="grid grid-cols-8 gap-2">
+                {category.emojis.map((emoji, emojiIdx) => (
+                  <button
+                    key={emojiIdx}
+                    onClick={() => {
+                      onSelect(emoji);
+                      onClose();
+                    }}
+                    className="text-2xl hover:bg-white/10 rounded-lg p-2 transition-all hover:scale-125 cursor-pointer"
+                    title={emoji}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // GIPHY Search Component
 const GiphyPicker: React.FC<{
   onSelect: (gifUrl: string) => void;
@@ -469,6 +521,48 @@ const GiphyPicker: React.FC<{
   );
 };
 
+// User mention parser - converts @username to highlighted mentions
+const parseMentions = (text: string, allUsers: Array<{ username: string; avatar: string }>, currentUsername?: string): { html: string; mentions: string[] } => {
+  if (!text) return { html: '', mentions: [] };
+  
+  // Find all @mentions including @all
+  const mentionRegex = /@(\w+)/g;
+  let result = text;
+  const mentions: string[] = [];
+  const foundMentions = new Set<string>();
+  
+  let match;
+  while ((match = mentionRegex.exec(text)) !== null) {
+    const mention = match[1].toLowerCase();
+    if (mention === 'all') {
+      mentions.push('@all');
+      foundMentions.add('@all');
+    } else {
+      const user = allUsers.find(u => u.username.toLowerCase() === mention);
+      if (user) {
+        mentions.push(user.username);
+        foundMentions.add(user.username);
+      }
+    }
+  }
+  
+  // Replace mentions with highlighted HTML
+  foundMentions.forEach(mention => {
+    if (mention === '@all') {
+      const regex = /@all/gi;
+      result = result.replace(regex, `<span class="mention-user mention-all" style="color: #fbbf24; font-weight: bold; cursor: pointer; background: rgba(251, 191, 36, 0.2); padding: 2px 4px; border-radius: 4px;">@all</span>`);
+    } else {
+      const user = allUsers.find(u => u.username.toLowerCase() === mention.toLowerCase());
+      if (user) {
+        const regex = new RegExp(`@${user.username}`, 'gi');
+        result = result.replace(regex, `<span class="mention-user" data-username="${user.username}" style="color: #5865f2; font-weight: bold; cursor: pointer; background: rgba(88, 101, 242, 0.1); padding: 2px 4px; border-radius: 4px;">@${user.username}</span>`);
+      }
+    }
+  });
+  
+  return { html: result, mentions };
+};
+
 // HTML sanitizer - allows only safe HTML tags
 const sanitizeHTML = (html: string): string => {
   if (!html) return '';
@@ -559,7 +653,15 @@ const App: React.FC = () => {
   const [whiteboardStrokes, setWhiteboardStrokes] = useState<WhiteboardStroke[]>([]);
   const [newChannelType, setNewChannelType] = useState<'text' | 'whiteboard'>('text');
   const [showBreakMenu, setShowBreakMenu] = useState(false);
+  const [selectedPdf, setSelectedPdf] = useState<string | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showMentionPicker, setShowMentionPicker] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionPosition, setMentionPosition] = useState(0);
+  const [selectedUserProfile, setSelectedUserProfile] = useState<{ username: string; avatar: string } | null>(null);
+  const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const courseFileInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -1043,14 +1145,20 @@ const App: React.FC = () => {
       }
       setIsLoading(true);
       try {
+        // Parse mentions from message
+        const allUsers = [...uniqueUsers, ...(user ? [{ username: user.username, avatar: user.avatar }] : [])];
+        const mentionResult = parseMentions(inputMessage.trim(), allUsers, user?.username);
+        
         await sendMessage(selectedChannel, {
           username: user.username,
           avatar: user.avatar,
           text: inputMessage.trim(),
           timestamp: Date.now(),
-          type: 'text'
+          type: 'text',
+          mentions: mentionResult.mentions
         });
         setInputMessage('');
+        setShowMentionPicker(false);
       } catch (error: any) {
         console.error('Error sending message:', error);
         const errorMessage = error?.message || 'Bilinmeyen bir hata oluştu';
@@ -1250,7 +1358,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className={`h-screen flex bg-gradient-to-br ${darkMode ? 'from-[#1a1c1f] via-[#2f3136] to-[#36393f]' : 'from-gray-50 to-gray-100'} text-white overflow-hidden relative`}>
+    <div className={`h-screen flex bg-gradient-to-br ${darkMode ? 'from-[#1a1c1f] via-[#2f3136] to-[#36393f]' : 'from-white to-gray-50'} ${darkMode ? 'text-white' : 'text-gray-900'} overflow-hidden relative`}>
       {/* Animated Background Elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-float"></div>
@@ -1264,7 +1372,7 @@ const App: React.FC = () => {
             <div className="p-1.5 rounded-lg bg-gradient-to-br from-[#5865f2] to-[#eb459e] animate-glow">
               <Hash size={18} className="text-white" />
             </div>
-            <span className="font-bold text-white text-sm tracking-wide">Kutuphane Chat</span>
+            <span className={`font-bold ${darkMode ? 'text-white' : 'text-gray-900'} text-sm tracking-wide`}>Kutuphane Chat</span>
           </div>
       </div>
 
@@ -1290,7 +1398,7 @@ const App: React.FC = () => {
                 onChange={(e) => setNewChannelName(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleCreateChannel()}
                 placeholder="Kanal adı"
-                className="w-full px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm"
+                className={`w-full px-3 py-2 text-sm ${darkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-gray-100 border-gray-300 text-gray-900'} border rounded-lg placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition backdrop-blur-sm`}
               />
               <div className="flex gap-2">
                 <button
@@ -1512,22 +1620,20 @@ const App: React.FC = () => {
             />
             <div className="space-y-2">
               {courseFiles.map((file) => (
-                <a
+                <div
                   key={file.id}
-                  href={file.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-all hover-glow"
+                  onClick={() => file.type === 'application/pdf' ? setSelectedPdf(file.url) : window.open(file.url, '_blank')}
+                  className="block p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-all hover-glow cursor-pointer"
                 >
                   <div className="flex items-center gap-2">
                     <FileText size={16} className="text-gray-400 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm text-white truncate font-medium">{file.name}</div>
+                      <div className={`text-sm ${darkMode ? 'text-white' : 'text-gray-800'} truncate font-medium`}>{file.name}</div>
                       <div className="text-xs text-gray-400">{file.uploadedBy}</div>
                     </div>
                   </div>
-                </a>
-                                ))}
+                </div>
+              ))}
                             </div>
                         </div>
         </div>
@@ -1657,18 +1763,26 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredMessages.map((msg) => (
+              {filteredMessages.map((msg) => {
+                const isMentioned = user && (
+                  msg.mentions?.includes(user.username) || 
+                  msg.mentions?.includes('@all')
+                );
+                return (
                 <div
                   key={msg.id}
                   className={`flex gap-4 group hover:bg-white/5 px-4 py-2 -mx-4 rounded-xl transition-all ${
                     msg.username === user?.username ? 'bg-[#5865f2]/10' : ''
-                  } ${msg.type === 'break' ? 'bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-l-4 border-yellow-500 shadow-lg shadow-yellow-500/20' : ''}`}
+                  } ${msg.type === 'break' ? 'bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-l-4 border-yellow-500 shadow-lg shadow-yellow-500/20' : ''} ${
+                    isMentioned ? 'bg-yellow-500/20 border-l-4 border-yellow-500' : ''
+                  }`}
                 >
                   <div className="relative">
                     <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-0 group-hover:opacity-30 transition-opacity"></div>
                     <img
                       src={msg.avatar}
                       alt={msg.username}
+                      onClick={() => setSelectedUserProfile({ username: msg.username, avatar: msg.avatar })}
                       className="w-11 h-11 rounded-full flex-shrink-0 cursor-pointer ring-2 ring-white/10 group-hover:ring-[#5865f2]/50 transition-all relative z-10"
                     />
                   </div>
@@ -1723,32 +1837,52 @@ const App: React.FC = () => {
                     )}
                     {msg.text && (
                       <div 
-                        className="text-gray-300 text-sm break-words message-content"
-                        dangerouslySetInnerHTML={{ __html: sanitizeHTML(msg.text) }}
+                        className={`${darkMode ? 'text-gray-300' : 'text-gray-700'} text-sm break-words message-content`}
+                        dangerouslySetInnerHTML={{ __html: sanitizeHTML(parseMentions(msg.text, [...uniqueUsers, ...(user ? [{ username: user.username, avatar: user.avatar }] : [])], user?.username).html) }}
                         style={{
                           lineHeight: '1.5'
                         }}
                       />
                     )}
-                    {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                      <div className="flex gap-1 mt-2">
-                        {Object.entries(msg.reactions).map(([emoji, users]) => {
-                          const userList = Array.isArray(users) ? users : [];
-                          return (
-                            <button
-                              key={emoji}
-                              className="px-2 py-1 bg-white/5 hover:bg-white/10 rounded flex items-center gap-1 text-xs transition"
-                            >
-                              <span>{emoji}</span>
-                              <span className="text-gray-400">{userList.length}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2 mt-2">
+                      {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                        <div className="flex gap-1 flex-wrap">
+                          {Object.entries(msg.reactions).map(([emoji, users]) => {
+                            const userList = Array.isArray(users) ? users : [];
+                            const hasReacted = user && userList.includes(user.username);
+                            return (
+                              <button
+                                key={emoji}
+                                onClick={() => {
+                                  if (user && selectedChannel) {
+                                    addReaction(selectedChannel, msg.id, emoji, user.username);
+                                  }
+                                }}
+                                className={`px-2 py-1 rounded flex items-center gap-1 text-xs transition ${
+                                  hasReacted 
+                                    ? 'bg-[#5865f2]/30 hover:bg-[#5865f2]/40' 
+                                    : 'bg-white/5 hover:bg-white/10'
+                                }`}
+                              >
+                                <span>{emoji}</span>
+                                <span className="text-gray-400">{userList.length}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <button
+                        onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
+                        className="px-2 py-1 text-gray-400 hover:text-white hover:bg-white/5 rounded text-xs transition opacity-0 group-hover:opacity-100"
+                        title="Tepki Ekle"
+                      >
+                        <Smile size={14} />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
               <div ref={messagesEndRef} />
             </div>
           )}
@@ -1833,15 +1967,102 @@ const App: React.FC = () => {
                   className="hidden"
                 />
               </div>
-              <input
-                type="text"
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSendMessage()}
-                placeholder={`#${channels.find(c => c.id === selectedChannel)?.name || 'kanal'} kanalında mesaj gönder`}
+              <button
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                 disabled={isLoading}
-                className="flex-1 px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition disabled:opacity-50 text-sm md:text-base backdrop-blur-sm"
-              />
+                className="p-2.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-all disabled:opacity-50 hover:scale-110"
+                title="Emoji Ekle"
+              >
+                <Smile size={18} />
+              </button>
+              <div className="flex-1 relative">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={inputMessage}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setInputMessage(value);
+                    const cursorPos = e.target.selectionStart || 0;
+                    const textBeforeCursor = value.substring(0, cursorPos);
+                    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+                    
+                    if (lastAtIndex !== -1) {
+                      const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
+                      if (!textAfterAt.includes(' ') && !textAfterAt.includes('\n')) {
+                        setMentionQuery(textAfterAt);
+                        setMentionPosition(lastAtIndex);
+                        setShowMentionPicker(true);
+                      } else {
+                        setShowMentionPicker(false);
+                      }
+                    } else {
+                      setShowMentionPicker(false);
+                    }
+                  }}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter' && !isLoading && !showMentionPicker) {
+                      handleSendMessage();
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setShowMentionPicker(false);
+                    }
+                  }}
+                  placeholder={`#${channels.find(c => c.id === selectedChannel)?.name || 'kanal'} kanalında mesaj gönder`}
+                  disabled={isLoading}
+                  className={`w-full px-4 py-2.5 ${darkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-gray-100 border-gray-300 text-gray-900'} border rounded-lg placeholder-gray-500 focus:outline-none focus:border-[#5865f2] focus:ring-2 focus:ring-[#5865f2]/50 transition disabled:opacity-50 text-sm md:text-base backdrop-blur-sm`}
+                />
+                {showMentionPicker && (
+                  <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#2f3136] border border-white/10 rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto">
+                    <button
+                      onClick={() => {
+                        const beforeAt = inputMessage.substring(0, mentionPosition);
+                        const afterAt = inputMessage.substring(inputRef.current?.selectionStart || inputMessage.length);
+                        setInputMessage(beforeAt + '@all ' + afterAt);
+                        setShowMentionPicker(false);
+                        setTimeout(() => {
+                          const newPos = (beforeAt + '@all ').length;
+                          inputRef.current?.setSelectionRange(newPos, newPos);
+                          inputRef.current?.focus();
+                        }, 0);
+                      }}
+                      className="w-full px-4 py-3 text-left hover:bg-white/5 transition-all flex items-center gap-3 text-sm text-gray-300 hover:text-white border-b border-white/10"
+                    >
+                      <span className="text-xl">🔔</span>
+                      <div>
+                        <div className="font-semibold">@all</div>
+                        <div className="text-xs text-gray-400">Herkesi etiketle</div>
+                      </div>
+                    </button>
+                    {[...uniqueUsers, ...(user ? [{ username: user.username, avatar: user.avatar }] : [])]
+                      .filter(u => u.username.toLowerCase().includes(mentionQuery.toLowerCase()))
+                      .map((u) => (
+                        <button
+                          key={u.username}
+                          onClick={() => {
+                            const beforeAt = inputMessage.substring(0, mentionPosition);
+                            const afterAt = inputMessage.substring(inputRef.current?.selectionStart || inputMessage.length);
+                            setInputMessage(beforeAt + '@' + u.username + ' ' + afterAt);
+                            setShowMentionPicker(false);
+                            setTimeout(() => {
+                              const newPos = (beforeAt + '@' + u.username + ' ').length;
+                              inputRef.current?.setSelectionRange(newPos, newPos);
+                              inputRef.current?.focus();
+                            }, 0);
+                          }}
+                          className="w-full px-4 py-3 text-left hover:bg-white/5 transition-all flex items-center gap-3 text-sm text-gray-300 hover:text-white"
+                        >
+                          <img src={u.avatar} alt={u.username} className="w-8 h-8 rounded-full" />
+                          <div>
+                            <div className="font-semibold">{u.username}</div>
+                          </div>
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
               <button
                 onClick={handleSendMessage}
                 disabled={!inputMessage.trim() || isLoading}
@@ -1878,6 +2099,17 @@ const App: React.FC = () => {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Emoji Picker */}
+      {showEmojiPicker && (
+        <EmojiPicker
+          onSelect={(emoji) => {
+            setInputMessage(prev => prev + emoji);
+            setShowEmojiPicker(false);
+          }}
+          onClose={() => setShowEmojiPicker(false)}
+        />
       )}
 
       {/* GIPHY Picker */}
@@ -1949,6 +2181,87 @@ const App: React.FC = () => {
           }
         }
       `}</style>
+
+      {/* Reaction Picker */}
+      {showReactionPicker && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center" onClick={() => setShowReactionPicker(null)}>
+          <div className="bg-[#2f3136] rounded-lg shadow-2xl p-4 border border-white/10" onClick={(e) => e.stopPropagation()}>
+            <div className="grid grid-cols-6 gap-2">
+              {['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '👏', '🎉', '💯', '🤔', '👎'].map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => {
+                    if (user && selectedChannel && showReactionPicker) {
+                      addReaction(selectedChannel, showReactionPicker, emoji, user.username);
+                      setShowReactionPicker(null);
+                    }
+                  }}
+                  className="text-2xl hover:scale-125 transition-transform p-2 hover:bg-white/10 rounded-lg"
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* User Profile Card */}
+      {selectedUserProfile && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setSelectedUserProfile(null)}>
+          <div className="bg-[#2f3136] rounded-lg shadow-2xl w-full max-w-md border border-white/10 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="h-32 bg-gradient-to-r from-[#5865f2] to-[#eb459e] relative">
+              <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2">
+                <img
+                  src={selectedUserProfile.avatar}
+                  alt={selectedUserProfile.username}
+                  className="w-24 h-24 rounded-full border-4 border-[#2f3136]"
+                />
+              </div>
+            </div>
+            <div className="pt-16 pb-6 px-6 text-center">
+              <h2 className="text-2xl font-bold text-white mb-2">{selectedUserProfile.username}</h2>
+              <div className="flex items-center justify-center gap-2 text-gray-400 text-sm">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <span>Online</span>
+              </div>
+            </div>
+            <div className="px-6 pb-6">
+              <button
+                onClick={() => {
+                  setInputMessage(prev => prev + `@${selectedUserProfile.username} `);
+                  setSelectedUserProfile(null);
+                  inputRef.current?.focus();
+                }}
+                className="w-full px-4 py-2 bg-[#5865f2] hover:bg-[#4752c4] text-white rounded-lg font-semibold transition"
+              >
+                Mesaj Gönder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF Viewer Modal */}
+      {selectedPdf && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setSelectedPdf(null)}>
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h2 className="text-lg font-bold text-gray-900">PDF Görüntüleyici</h2>
+              <button onClick={() => setSelectedPdf(null)} className="text-gray-400 hover:text-gray-600 transition">
+                <X size={24} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <iframe
+                src={selectedPdf}
+                className="w-full h-full border-0"
+                title="PDF Viewer"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

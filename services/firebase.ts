@@ -64,6 +64,7 @@ export const sendMessage = async (channelId: string, message: {
   gifUrl?: string;
   timestamp: number;
   type: 'text' | 'image' | 'gif' | 'break';
+  mentions?: string[];
 }) => {
   if (!channelId) {
     throw new Error('Channel ID is required');
@@ -74,6 +75,31 @@ export const sendMessage = async (channelId: string, message: {
   } catch (error) {
     console.error('Firebase sendMessage error:', error);
     throw error;
+  }
+};
+
+export const addReaction = async (channelId: string, messageId: string, emoji: string, username: string) => {
+  if (!channelId || !messageId) return;
+  const messageRef = doc(db, `channels/${channelId}/messages/${messageId}`);
+  const messageDoc = await getDoc(messageRef);
+  
+  if (messageDoc.exists()) {
+    const messageData = messageDoc.data();
+    const reactions = messageData.reactions || {};
+    const emojiReactions = reactions[emoji] || [];
+    
+    if (!emojiReactions.includes(username)) {
+      emojiReactions.push(username);
+    } else {
+      // Remove reaction if already exists (toggle)
+      const index = emojiReactions.indexOf(username);
+      emojiReactions.splice(index, 1);
+      if (emojiReactions.length === 0) {
+        delete reactions[emoji];
+      }
+    }
+    
+    await setDoc(messageRef, { reactions }, { merge: true });
   }
 };
 
