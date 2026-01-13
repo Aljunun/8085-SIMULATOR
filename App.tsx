@@ -1204,7 +1204,7 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, [selectedCourse]);
 
-  // Subscribe to whiteboard strokes
+  // Subscribe to whiteboard strokes - only for selected channel with cache
   useEffect(() => {
     if (!selectedChannel) {
       setWhiteboardStrokes([]);
@@ -1216,23 +1216,52 @@ const App: React.FC = () => {
       return;
     }
 
+    // Load from cache immediately
+    if (whiteboardCache[selectedChannel]) {
+      setWhiteboardStrokes(whiteboardCache[selectedChannel]);
+    } else {
+      setWhiteboardStrokes([]);
+    }
+
     const unsubscribe = subscribeToWhiteboard(selectedChannel, (strokes) => {
-      setWhiteboardStrokes(strokes as WhiteboardStroke[]);
+      const whiteboardStrokes = strokes as WhiteboardStroke[];
+      setWhiteboardStrokes(whiteboardStrokes);
+      // Update cache
+      setWhiteboardCache(prev => ({ ...prev, [selectedChannel]: whiteboardStrokes }));
     });
     return () => unsubscribe();
   }, [selectedChannel, channels]);
 
-  // Subscribe to Firebase messages
+  // Subscribe to Firebase messages - only for selected channel with cache
   useEffect(() => {
     if (!user || !selectedChannel) return;
     const selectedChannelData = channels.find(c => c.id === selectedChannel);
     if (selectedChannelData?.type === 'whiteboard') return; // Skip messages for whiteboard channels
 
+    let isInitialLoad = true;
+
+    // Load from cache immediately
+    if (messageCache[selectedChannel]) {
+      setMessages(messageCache[selectedChannel]);
+      prevMessagesLengthRef.current = messageCache[selectedChannel].length;
+    } else {
+      setMessages([]);
+      prevMessagesLengthRef.current = 0;
+    }
+
     const unsubscribe = subscribeToMessages(selectedChannel, (firebaseMessages) => {
       const prevLength = prevMessagesLengthRef.current;
       setMessages(firebaseMessages);
 
-      if (firebaseMessages.length > prevLength && prevLength > 0) {
+      // Update cache
+      setMessageCache(prev => ({ ...prev, [selectedChannel]: firebaseMessages }));
+
+      // Only show notification for truly new messages (not on channel switch or initial load)
+      const isReallyNewMessage = !isInitialLoad && 
+                                 firebaseMessages.length > prevLength && 
+                                 prevLength > 0;
+
+      if (isReallyNewMessage) {
         const lastMessage = firebaseMessages[firebaseMessages.length - 1];
         if (lastMessage.username !== user.username && notificationsEnabled) {
           if (lastMessage.type === 'break') {
@@ -1274,6 +1303,7 @@ const App: React.FC = () => {
       }
 
       prevMessagesLengthRef.current = firebaseMessages.length;
+      isInitialLoad = false;
     });
 
     return () => unsubscribe();
@@ -1286,10 +1316,18 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Auto scroll to bottom when new message arrives
+  // Auto scroll to bottom - instant on channel change, smooth on new message
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (messagesEndRef.current && messages.length > 0) {
+      // Instant scroll when loading from cache or switching channels
+      const shouldScrollInstantly = messageCache[selectedChannel || '']?.length === messages.length;
+      
+      messagesEndRef.current.scrollIntoView({ 
+        behavior: shouldScrollInstantly ? 'auto' : 'smooth',
+        block: 'end'
+      });
+    }
+  }, [messages, selectedChannel]);
 
   // Typing indicator
   useEffect(() => {
@@ -1646,6 +1684,13 @@ const App: React.FC = () => {
       try {
         await clearAllMessages(selectedChannel);
         setMessages([]);
+        prevMessagesLengthRef.current = 0;
+        // Clear cache for this channel
+        setMessageCache(prev => {
+          const newCache = { ...prev };
+          delete newCache[selectedChannel];
+          return newCache;
+        });
       } catch (error) {
         console.error('Error clearing messages:', error);
         alert('Mesajlar silinirken bir hata oluştu.');
@@ -2212,9 +2257,15 @@ const App: React.FC = () => {
                   return (
                     <div
                       key={msg.id}
-                      className={`flex gap-4 group ${darkMode ? 'hover:bg-white/5' : 'hover:bg-gray-100'} px-4 py-2 -mx-4 rounded-xl transition-all ${msg.username === user?.username ? 'bg-[#5865f2]/10' : ''
-                        } ${msg.type === 'break' ? 'bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-l-4 border-yellow-500 shadow-lg shadow-yellow-500/20' : ''} ${isMentioned ? 'bg-yellow-500/20 border-l-4 border-yellow-500' : ''
-                        }`}
+                      className={`flex gap-4 group px-4 py-2 -mx-4 rounded transition-all ${
+                        msg.type === 'break' 
+                          ? 'bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-l-4 border-yellow-500 shadow-lg shadow-yellow-500/20' 
+                          : isMentioned 
+                            ? 'bg-yellow-500/20 border-l-4 border-yellow-500'
+                            : darkMode 
+                              ? 'hover:bg-[#2b2d31]' 
+                              : 'hover:bg-gray-50'
+                      }`}
                     >
                       <div className="relative">
                         <div className="absolute inset-0 bg-gradient-to-br from-[#5865f2] to-[#eb459e] rounded-full blur-sm opacity-0 group-hover:opacity-30 transition-opacity"></div>
@@ -2246,32 +2297,6 @@ const App: React.FC = () => {
                             <Pin size={12} className="text-yellow-400" />
                           )}
                         </div>
-                        {/* Reactions - shown above message content */}
-                        {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                          <div className="flex gap-1 flex-wrap mb-2">
-                            {Object.entries(msg.reactions).map(([emoji, users]) => {
-                              const userList = Array.isArray(users) ? users : [];
-                              const hasReacted = user && userList.includes(user.username);
-                              return (
-                                <button
-                                  key={emoji}
-                                  onClick={() => {
-                                    if (user && selectedChannel) {
-                                      addReaction(selectedChannel, msg.id, emoji, user.username);
-                                    }
-                                  }}
-                                  className={`px-2 py-1 rounded flex items-center gap-1 text-xs transition ${hasReacted
-                                      ? 'bg-[#5865f2]/30 hover:bg-[#5865f2]/40'
-                                      : darkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'
-                                    } ${darkMode ? 'text-white' : 'text-gray-700'}`}
-                                >
-                                  <span>{emoji}</span>
-                                  <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>{userList.length}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
                         {msg.imageUrl && (
                           <div className="mb-2">
                             <img
@@ -2308,10 +2333,49 @@ const App: React.FC = () => {
                             }}
                           />
                         )}
-                        <div className="flex items-center gap-2 mt-2">
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          {/* Existing Reactions */}
+                          {msg.reactions && Object.keys(msg.reactions).length > 0 && Object.entries(msg.reactions).map(([emoji, users]) => {
+                            const userList = Array.isArray(users) ? users : [];
+                            const hasReacted = user && userList.includes(user.username);
+                            return (
+                              <button
+                                key={emoji}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (user && selectedChannel) {
+                                    addReaction(selectedChannel, msg.id, emoji, user.username);
+                                  }
+                                }}
+                                className={`px-1.5 py-0.5 rounded flex items-center gap-1 text-xs transition border ${
+                                  hasReacted 
+                                    ? darkMode 
+                                      ? 'bg-[#5865f2]/20 border-[#5865f2] hover:bg-[#5865f2]/30' 
+                                      : 'bg-[#5865f2]/10 border-[#5865f2] hover:bg-[#5865f2]/20'
+                                    : darkMode 
+                                      ? 'bg-[#2b2d31] border-[#3f4147] hover:bg-[#35373c]' 
+                                      : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                                }`}
+                                title={userList.join(', ')}
+                              >
+                                <span className="text-base">{emoji}</span>
+                                <span className={`text-xs font-medium ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                                  {userList.length}
+                                </span>
+                              </button>
+                            );
+                          })}
+                          {/* Add Reaction Button */}
                           <button
-                            onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
-                            className={`px-2 py-1 ${darkMode ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'} rounded text-xs transition opacity-0 group-hover:opacity-100`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id);
+                            }}
+                            className={`p-1 rounded transition border opacity-0 group-hover:opacity-100 ${
+                              darkMode 
+                                ? 'bg-[#2b2d31] border-[#3f4147] hover:bg-[#35373c] text-gray-400 hover:text-white' 
+                                : 'bg-gray-50 border-gray-200 hover:bg-gray-100 text-gray-600 hover:text-gray-900'
+                            }`}
                             title="Tepki Ekle"
                           >
                             <Smile size={14} />
@@ -2620,21 +2684,32 @@ const App: React.FC = () => {
         }
       `}</style>
 
-      {/* Reaction Picker */}
+      {/* Reaction Picker - Discord Style */}
       {showReactionPicker && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center" onClick={() => setShowReactionPicker(null)}>
-          <div className="bg-[#2f3136] rounded-lg shadow-2xl p-4 border border-white/10" onClick={(e) => e.stopPropagation()}>
-            <div className="grid grid-cols-6 gap-2">
-              {['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '👏', '🎉', '💯', '🤔', '👎'].map((emoji) => (
+        <div className="fixed inset-0 z-50" onClick={() => setShowReactionPicker(null)}>
+          <div 
+            className={`absolute ${darkMode ? 'bg-[#2b2d31]' : 'bg-white'} rounded-lg shadow-2xl p-2 border ${darkMode ? 'border-[#3f4147]' : 'border-gray-200'}`} 
+            onClick={(e) => e.stopPropagation()}
+            style={{ 
+              left: '50%',
+              top: '50%',
+              transform: 'translate(-50%, -50%)'
+            }}
+          >
+            <div className="grid grid-cols-8 gap-1">
+              {['❤️', '👍', '👎', '😂', '😮', '😢', '😡', '🎉', '🔥', '👏', '✨', '💯', '🤔', '👀', '💪', '🙏'].map((emoji) => (
                 <button
                   key={emoji}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     if (user && selectedChannel && showReactionPicker) {
                       addReaction(selectedChannel, showReactionPicker, emoji, user.username);
                       setShowReactionPicker(null);
                     }
                   }}
-                  className="text-2xl hover:scale-125 transition-transform p-2 hover:bg-white/10 rounded-lg"
+                  className={`text-xl hover:scale-125 transition-transform p-2 rounded ${
+                    darkMode ? 'hover:bg-[#35373c]' : 'hover:bg-gray-100'
+                  }`}
                 >
                   {emoji}
                 </button>
